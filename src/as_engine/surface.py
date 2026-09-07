@@ -8,8 +8,6 @@ from copy import deepcopy
 from dataclasses import replace
 from typing import Any
 
-from assistant_skills_lib.error_handler import BaseAPIError  # type: ignore[import-untyped]
-
 from .errors import SurfaceError, messages_from
 from .index import Operation, OperationIndex, ProductIndexes
 from .params import alias_flags, body_errors, kebab_case, validate_parameters
@@ -17,6 +15,16 @@ from .transforms import Context, Registry, default_registry
 from .transforms.richtext import validate_options
 from .transforms.values import MISSING, set_target, target_value
 from .transport import Response, Transport
+
+
+def __getattr__(name: str) -> Any:
+    """Keep the historical domain-error export lazy with the HTTP stack."""
+    if name != "BaseAPIError":
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    from assistant_skills_lib.error_handler import BaseAPIError  # type: ignore[import-untyped]
+
+    globals()[name] = BaseAPIError
+    return BaseAPIError
 
 
 def deprecation(operation: Operation) -> tuple[bool, Any]:
@@ -160,6 +168,8 @@ class Surface:
         representation: str | None = None,
         raw: bool = False,
     ) -> Response:
+        from assistant_skills_lib.error_handler import BaseAPIError  # type: ignore[import-untyped]
+
         document, index, operation = self.resolve(name)
         note = operation.extensions.get("x-as-note")
         transports: dict[str, Transport] = {}

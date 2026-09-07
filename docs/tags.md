@@ -217,3 +217,21 @@ means safe). Level 2 shows it. Product CLI adapters default destructive and
 irreversible operations to a zero-request JSON preview and require `--confirm`
 to invoke the normal guarded call path. Direct Surface calls do not implement
 this product CLI policy. See [help.md](help.md) for preview fields and limits.
+
+
+## Legacy command rename entries (JAS-41)
+
+`x-as-legacy-verbs` is an operation extension containing an array of records:
+`{"group":"page","verb":"create","invocation":"api call createPage --body @page.json"}`.
+`group` is a space-separated command path; `verb` is its removed leaf; `invocation`
+is an actionable indexed replacement. All three are nonempty strings. Optional
+`note` is a per-verb caveat; otherwise the operation's `x-as-note` is emitted.
+Duplicate group/verb pairs and collisions with surviving commands are errors.
+
+Each rename is a provenance-validated Overlay action using the normal description,
+reason, evidence, origin and unique test identifier. Multiple old verbs may name
+one operation. The compiled list is consumed by the product-neutral Click registrar
+in confluence-as `cli/legacy.py`; the engine preserves it as extension data.
+Executing a registered legacy leaf emits `{status, messages, operation, note}` JSON
+on stderr, exits 2 and never creates a transport. Help remains exit 0. Products
+may tag representative entries `x-as-topic: ["migration"]` for help discovery.

@@ -108,6 +108,12 @@ generation. It does not persist state or infer a root from reachable schemas.
 Without an indexed 200 schema/example it returns null. Generated values are
 representative, not a guarantee that every arbitrary schema constraint is met.
 
+`SimulationStore` and `Simulation` provide an opt-in, stateful transport double
+for product wrapper tests. It keeps a detached JSON snapshot, a shared copied
+call log, and only the explicitly documented Confluence operation semantics;
+unknown operations fail instead of reaching a responder or HTTP. See
+[docs/simulation.md](docs/simulation.md) for its seed and CQL subset.
+
 Search and topics visit primary indexes only. Search is case-insensitive over ID,
 summary, path, tags and x-as-note, with every supplied word required to match.
 Deprecated operations require `include_deprecated=True`. Naming a lower-tier

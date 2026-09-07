@@ -3,12 +3,32 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from assistant_skills_lib.error_handler import (  # type: ignore[import-untyped]
-    BaseAPIError,
-    sanitize_error_message,
-)
+if TYPE_CHECKING:
+    from assistant_skills_lib.error_handler import BaseAPIError  # type: ignore[import-untyped]
+
+
+def __getattr__(name: str) -> Any:
+    """Keep historical error-handler exports available without eager imports."""
+    if name not in {"BaseAPIError", "sanitize_error_message"}:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    from assistant_skills_lib.error_handler import (  # type: ignore[import-untyped]
+        BaseAPIError,
+        sanitize_error_message,
+    )
+
+    value = BaseAPIError if name == "BaseAPIError" else sanitize_error_message
+    globals()[name] = value
+    return value
+
+
+def _sanitize(value: str) -> str:
+    from assistant_skills_lib.error_handler import (
+        sanitize_error_message,  # type: ignore[import-untyped]
+    )
+
+    return sanitize_error_message(value)
 
 
 def messages_from(data: Any) -> list[str]:
@@ -17,7 +37,7 @@ def messages_from(data: Any) -> list[str]:
         try:
             return messages_from(json.loads(data))
         except (ValueError, TypeError):
-            return [sanitize_error_message(data)] if data else []
+            return [_sanitize(data)] if data else []
     if isinstance(data, list):
         return [message for value in data for message in messages_from(value)]
     if isinstance(data, dict):
@@ -71,6 +91,10 @@ class SurfaceError(Exception):
 
     @classmethod
     def from_domain(cls, error: BaseAPIError) -> SurfaceError:
+        from assistant_skills_lib.error_handler import (
+            sanitize_error_message,  # type: ignore[import-untyped]
+        )
+
         return cls(
             error.status_code,
             messages_from(error.response_data) or [sanitize_error_message(error.message)],

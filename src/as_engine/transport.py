@@ -8,15 +8,38 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 from urllib.parse import quote
 
-import requests
-from assistant_skills_lib.error_handler import (  # type: ignore[import-untyped]
-    ServerError,
-    handle_api_error,
-)
-from requests.adapters import HTTPAdapter
+if TYPE_CHECKING:
+    import requests
+
+
+def __getattr__(name: str) -> Any:
+    """Keep historical module-level HTTP names available without eager imports."""
+    if name in {"requests", "HTTPAdapter"}:
+        import requests
+        from requests.adapters import HTTPAdapter
+
+        value = requests if name == "requests" else HTTPAdapter
+    elif name in {"ServerError", "handle_api_error"}:
+        from assistant_skills_lib.error_handler import (  # type: ignore[import-untyped]
+            ServerError,
+            handle_api_error,
+        )
+
+        value = ServerError if name == "ServerError" else handle_api_error
+    else:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    globals()[name] = value
+    return value
+
+
+def _default_error_handler(*args: Any, **kwargs: Any) -> None:
+    """Defer the legacy error mapper until an HTTP transport is used."""
+    from assistant_skills_lib.error_handler import handle_api_error  # type: ignore[import-untyped]
+
+    handle_api_error(*args, **kwargs)
 
 from .index import Operation
 
@@ -58,7 +81,7 @@ class HTTPTransport:
         max_retries: int = 3,
         retry_backoff: float = 2,
         verify_ssl: bool = True,
-        error_handler: Callable[..., None] = handle_api_error,
+        error_handler: Callable[..., None] = _default_error_handler,
         sleep: Callable[[float], None] = time.sleep,
     ):
         self.base_url = base_url.rstrip("/")
@@ -66,8 +89,18 @@ class HTTPTransport:
         self.max_retries = max_retries
         self.retry_backoff = retry_backoff
         self.verify_ssl = verify_ssl
-        self.error_handler = error_handler
         self.sleep = sleep
+        import requests
+        from requests.adapters import HTTPAdapter
+
+        self._requests = requests
+        if error_handler is _default_error_handler:
+            from assistant_skills_lib.error_handler import (
+                handle_api_error,  # type: ignore[import-untyped]
+            )
+
+            error_handler = handle_api_error
+        self.error_handler = error_handler
         self.session = requests.Session()
         self.session.auth = auth
         self.session.headers.update({"Accept": "application/json"})
@@ -168,8 +201,12 @@ class HTTPTransport:
                     verify=self.verify_ssl,
                     allow_redirects=False,
                 )
-            except requests.RequestException as exc:
+            except self._requests.RequestException as exc:
                 # Do not include request URLs or credential-bearing headers in diagnostics.
+                from assistant_skills_lib.error_handler import (
+                    ServerError,  # type: ignore[import-untyped]
+                )
+
                 raise ServerError(
                     "HTTP transport failed: " + type(exc).__name__,
                     operation=operation.operationId,
