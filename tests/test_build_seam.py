@@ -116,6 +116,7 @@ def test_compile_golden_bytes_and_schema_closure():
                 "description": None,
                 "parameters": [{"name": "thing", "in": "path", "required": True, "type": "string"}],
                 "requestBody": {"ref": "Thing"},
+                "request_media_types": ["application/json"],
                 "response_200": None,
                 "extensions": {},
                 "reachable_schemas": ["Child", "Thing"],

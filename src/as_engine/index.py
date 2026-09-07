@@ -5,9 +5,11 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+NO_EXAMPLE = object()
 
 
 @dataclass(frozen=True)
@@ -23,6 +25,11 @@ class Operation:
     response_200: str | None
     extensions: dict[str, Any]
     reachable_schemas: list[str]
+    response_schema: dict[str, Any] | None = None
+    response_example: Any = NO_EXAMPLE
+    deprecated: bool = False
+    request_body_required: bool = False
+    request_media_types: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -99,3 +106,42 @@ class ProductIndexes:
                 self._safe_path(self._entries[document_id]["file"])
             )
         return self._loaded[document_id]
+
+    def primary(self) -> list[tuple[str, OperationIndex]]:
+        """Primary indexes only, independent of previously loaded lower tiers."""
+        return [
+            (key, self.get(key))
+            for key, entry in self._entries.items()
+            if entry["tier"] == "primary"
+        ]
+
+    def find(self, name: str) -> tuple[str, OperationIndex, Operation]:
+        """Resolve exact canonical IDs before aliases, loading lower tiers on demand."""
+        from .params import kebab_case
+
+        for primary in (True, False):
+            candidates = [
+                (key, self.get(key))
+                for key, entry in self._entries.items()
+                if (entry["tier"] == "primary") == primary
+            ]
+            exact = [
+                (key, index, index.operations[name])
+                for key, index in candidates
+                if name in index.operations
+            ]
+            if exact:
+                if len(exact) != 1:
+                    raise ValueError(f"ambiguous operationId: {name}")
+                return exact[0]
+            aliases = [
+                (key, index, op)
+                for key, index in candidates
+                for op in index.operations.values()
+                if kebab_case(op.operationId) == name
+            ]
+            if len(aliases) > 1:
+                raise ValueError(f"ambiguous operation alias: {name}")
+            if aliases:
+                return aliases[0]
+        raise KeyError(name)

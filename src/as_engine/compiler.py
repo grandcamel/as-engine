@@ -145,6 +145,9 @@ def _parameter(document: dict[str, Any], value: Any) -> dict[str, Any]:
         projection["schema"] = {"$ref": schema["$ref"]}
     elif schema and ("format" in schema or "items" in schema or "properties" in schema):
         projection["schema"] = deepcopy(schema)
+    for key in ("style", "explode"):
+        if key in parameter:
+            projection[key] = deepcopy(parameter[key])
     return projection
 
 
@@ -208,6 +211,26 @@ def _operation_record(
             key: deepcopy(value) for key, value in operation.items() if key.startswith("x-")
         },
     }
+    if response_schema is not None and response_200 is None:
+        record["response_schema"] = deepcopy(response_schema)
+    if response is not None:
+        content = _resolve(document, response, "response").get("content", {})
+        media: dict[str, Any] = next((content[k] for k in sorted(content, key=lambda k: (k != "application/json", k))), {})
+        if "example" in media:
+            record["response_example"] = deepcopy(media["example"])
+        elif media.get("examples"):
+            example = next(iter(media["examples"].values()))
+            example = _resolve(document, example, "example")
+            if "value" in example:
+                record["response_example"] = deepcopy(example["value"])
+    if "deprecated" in operation:
+        record["deprecated"] = bool(operation["deprecated"])
+    if operation.get("requestBody") is not None:
+        request = _resolve(document, operation["requestBody"], "requestBody")
+        if "required" in request:
+            record["request_body_required"] = bool(request["required"])
+        if "content" in request:
+            record["request_media_types"] = sorted(request["content"])
     return op_id, record, roots
 
 

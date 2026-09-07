@@ -54,3 +54,69 @@ runs the downstream suites of confluence-as and jira-as against it, and only
 then publishes to PyPI. This package is never promoted on its own: a product's
 pinned build carries the core version it was released with (ADR 0013 in
 grand-camel-platform).
+
+## Generic Surface
+
+`Surface(ProductIndexes(directory), transport_factory)` provides `call`, `search`,
+`describe` and `topics`. The factory receives `(document_id, OperationIndex)` and
+returns a transport implementing
+`call(operation: Operation, parameters: Mapping[str, Any], body: Any) -> Response`.
+`Response` carries `status`, `body` and `headers`. HTTP domain exceptions reuse
+assistant-skills-lib; the product can pass its existing HTTP error mapper.
+The surface converts failures to `SurfaceError`, including the operation note.
+It closes transports that provide `close()` after each call. A direct Python
+consumer can keep an `HTTPTransport` context open for pooled sequential calls.
+
+Parameters are checked before the factory is called: required values, primitive
+and array/object types, enums and retained bounds. `kebab_case` maps canonical
+operation/parameter names to flags. Body fields are JSON-typed when parseable;
+`--field 'spaceId="5"'` therefore supplies a string while `--field spaceId=5`
+supplies an integer. Files and stdin must contain JSON. Conflicting dotted paths
+are refused rather than overwritten. `parse_call_flags` accepts repeated arrays,
+JSON arrays or comma-separated arrays, explicit `true`/`false`, and `--name=value`.
+If a spec parameter collides with `body`, `field`, `format`, `validate-body` or
+`help`, its flag is prefixed `--parameter-`. Duplicate scalar flags are refused.
+
+Bodies are checked only with `validate_body=True` or after a 400. The small
+checker supports local references, required/properties, additionalProperties:false,
+nullable, enums, primitive types, bounds, arrays and allOf/oneOf/anyOf. Unsupported
+validation keywords yield explicit diagnostics; format annotations are not
+assertions. It neither imports jsonschema nor fetches references. Validation
+reflects the indexed schema, including upstream defects such as overlapping
+oneOf branches. Schema repair belongs in a product overlay.
+
+`HTTPTransport` serializes path/query/header/cookie parameters, pools requests,
+applies timeouts, and retries explicit 429 and all 5xx responses with exponential
+backoff and numeric/date Retry-After. It never retries a 409, connection exception
+or follows a redirect. Retries on mutation responses follow the existing product
+policy. Bodies are JSON; operations requiring non-JSON media types fail explicitly.
+No pagination or prerequisite/rich-text transforms run in this surface. The
+operation's `limit` remains an ordinary spec parameter.
+
+`Responder(index, status=200, body=...)` implements the identical call interface.
+An explicit body wins, including null; otherwise forced error statuses produce a
+message, and successes use a media/schema example or bounded deterministic schema
+generation. It does not persist state or infer a root from reachable schemas.
+Without an indexed 200 schema/example it returns null. Generated values are
+representative, not a guarantee that every arbitrary schema constraint is met.
+
+Search and topics visit primary indexes only. Search is case-insensitive over ID,
+summary, path, tags and x-as-note, with every supplied word required to match.
+Deprecated operations require `include_deprecated=True`. Naming a lower-tier
+operation loads that tier on demand. Describe returns a JSON-ready document
+(method/path, description, parameters, body outline, response schema and extensions)
+that `describe_markdown` renders. All x-as tags and vendor scope tags remain visible.
+`x-as-deprecation`/`x-as-deprecated` replacement metadata overrides the standard
+OpenAPI deprecated flag; `x-as-topic` accepts a topic string or list.
+
+### Additive index metadata
+
+Old records load unchanged. New projections add fields only when source metadata
+exists: `response_schema` for an inline 200 schema (the original `response_200`
+remains the named reference or null), `response_example` for a media example,
+`deprecated`, `request_body_required`, and `request_media_types`. Parameters retain
+explicit `style`/`explode`. The original requestBody representation is unchanged.
+These runtime additions require regenerating the product's packaged indexes through
+its build hook; there is no runtime Base Document fallback.
+
+See [exit codes](docs/exit-codes.md) for the machine-readable failure contract.
