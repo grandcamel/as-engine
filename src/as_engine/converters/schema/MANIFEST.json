@@ -1,0 +1,11 @@
+{
+  "file": "full-57.3.4.json",
+  "package": "@atlaskit/adf-schema",
+  "version": "57.3.4",
+  "source_url": "https://unpkg.com/@atlaskit/adf-schema@57.3.4/dist/json-schema/v1/full.json",
+  "sha256": "75f080928a970250eb8289e9cae5374e3c2a6c0ac3ca22478acaa9d3f39484a3",
+  "fetched_at": "2026-09-07T01:52:17Z",
+  "license": "Apache-2.0",
+  "copyright": "Copyright 2019 Atlassian Pty Ltd",
+  "license_url": "https://unpkg.com/@atlaskit/adf-schema@57.3.4/LICENSE"
+}
