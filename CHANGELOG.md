@@ -55,6 +55,11 @@ core version it was released with (grand-camel-platform ADR 0013).
 - Product-independent four-level help documents with Markdown/JSON rendering,
   topic filtering, examples, token-cap snapshots and compatible full-
   description retention in the index (JAS-40)
+- An operation-tag scope guard with default-deny allowlists, explicit site
+  permission, body/argv identity binding and bounded consumer-authorized
+  metadata resolution before prerequisite or operation sends; local scope
+  refusal exits 4 with status null; per-call policy context on the Surface
+  (JAS-39)
 
 ## [0.1.0a0] - 2026-09-06
 
