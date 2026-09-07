@@ -81,6 +81,12 @@ core version it was released with (grand-camel-platform ADR 0013).
   destination host); the responder, cassette (`body_base64`, multipart
   metadata without bytes) and simulation support both modes; additive
   `Surface.call(output=...)`; `docs/binary.md`. (JAS-61)
+- JAS-63: operation discovery imports no HTTP or converter code — the Surface
+  loads the rich-text validator at call time and builds its default transform
+  registry on first access, and `output.py` keeps table formatting local
+  (byte-equal to the shared library's tabulate output and its fallback)
+  instead of importing the shared package; the import-isolation test now
+  covers surface, output and help. (JAS-63)
 
 ## [0.1.0a0] - 2026-09-06
 
