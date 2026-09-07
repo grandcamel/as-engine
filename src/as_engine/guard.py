@@ -161,14 +161,18 @@ def _body_identity(body: object, tag: dict) -> object:
 
 
 def _query_identity(value: object, tag: dict) -> object:
+    if "order_by" in tag and tag["order_by"] is None:
+        raise ValueError("order_by must be a nonempty list of unique fields")
+    if "order_by" in tag and "conjunction" not in tag:
+        raise ValueError("order_by requires conjunction")
     if "conjunction" not in tag:
         return _clause_identity(value, tag["clause"])
     if tag["conjunction"] is not True:
         raise ValueError("conjunction must be true")
-    return _conjunction_identity(value, tag["clause"])
+    return _conjunction_identity(value, tag["clause"], tag.get("order_by"))
 
 
-def _conjunction_identity(value: object, expected: object) -> object:
+def _conjunction_identity(value: object, expected: object, order_by: object = None) -> object:
     """Small AND-only literal grammar; every character must be consumed.
 
     Parentheses are IN lists only, not boolean groups or functions.
@@ -180,6 +184,16 @@ def _conjunction_identity(value: object, expected: object) -> object:
         or not _IDENTITY.fullmatch(expected)
     ):
         raise ValueError("invalid query clause")
+    if order_by is not None and (
+        not isinstance(order_by, list)
+        or not order_by
+        or not all(
+            isinstance(field, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", field)
+            for field in order_by
+        )
+        or len({field.casefold() for field in order_by}) != len(order_by)
+    ):
+        raise ValueError("order_by must be a nonempty list of unique fields")
     token = re.compile(
         r"""\s*(?:('(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")|([A-Za-z0-9_.-]+)|(!=|!~|<=|>=|=|~|<|>|\(|\)|,))"""
     )
@@ -267,6 +281,23 @@ def _conjunction_identity(value: object, expected: object) -> object:
             projects.extend(project if isinstance(project, list) else [str(project)])
         if position < len(tokens):
             kind, joiner = take()
+            if kind == "word" and joiner.upper() == "ORDER" and order_by is not None:
+                by_kind, by_word = take()
+                if by_kind != "word" or by_word.upper() != "BY":
+                    # Normalize only grammar words, never quoted values.
+                    raise ValueError("ORDER requires BY")
+                field_kind, ordering_field = take()
+                if field_kind != "word" or ordering_field.casefold() not in {
+                    field.casefold() for field in order_by
+                }:
+                    raise ValueError("ordering field is not permitted")
+                if position < len(tokens):
+                    direction_kind, direction = take()
+                    if direction_kind != "word" or direction.upper() not in {"ASC", "DESC"}:
+                        raise ValueError("invalid ordering direction")
+                if position != len(tokens):
+                    raise ValueError("trailing ordering syntax")
+                break
             if kind != "word" or joiner.upper() != "AND":
                 raise ValueError("only AND conjunctions are supported")
             if position == len(tokens):
@@ -325,6 +356,33 @@ def _decide_primary(
     if has_resolve and resolved_identity is None:
         return _deny(reason="identity requires resolution")
 
+    if location == "body" and "key_paths" in tag:
+        if set(tag) - {"in", "key_paths", "separator"}:
+            return _deny(reason="invalid body key_paths metadata")
+        paths = tag["key_paths"]
+        if (
+            not isinstance(paths, list)
+            or not paths
+            or not all(isinstance(path, str) and path.startswith("/") for path in paths)
+            or len(set(paths)) != len(paths)
+        ):
+            return _deny(reason="key_paths requires distinct JSON Pointers")
+        try:
+            identities = []
+            for path in paths:
+                key = _pointer(body, path)
+                if not isinstance(key, str):
+                    raise ValueError("each key_paths value must be one issue key")  # noqa: TRY004
+                identities.append(_key_identity(key, tag.get("separator")))
+        except ValueError as exc:
+            return _deny(reason=str(exc))
+        if not isinstance(argv_identity, str) or not argv_identity:
+            return _deny(identities, "body scope requires an explicit command identity")
+        if not any(_same_identity(argv_identity, identity) for identity in identities):
+            return _deny(identities, "command identity does not match any body key")
+        allowed = all(_allowed(identity, allowlist) for identity in identities)
+        return Decision(allowed, identities, "" if allowed else "identity is not allowed")
+
     if location == "body":
         if set(tag) - {
             "in",
@@ -334,6 +392,7 @@ def _decide_primary(
             "resolve",
             "clause",
             "conjunction",
+            "order_by",
             "separator",
         }:
             return _deny()
@@ -344,7 +403,7 @@ def _decide_primary(
             identity = _body_identity(body, tag)
             if "clause" in tag:
                 identity = _query_identity(identity, tag)
-            elif "conjunction" in tag:
+            elif "conjunction" in tag or "order_by" in tag:
                 raise ValueError("conjunction requires a query clause")
             if "separator" in tag:
                 if "clause" in tag:
@@ -365,7 +424,7 @@ def _decide_primary(
 
     if not isinstance(params, Mapping):
         return _deny(reason="parameters are missing")
-    if set(tag) - {"in", "name", "separator", "clause", "conjunction", "resolve"}:
+    if set(tag) - {"in", "name", "separator", "clause", "conjunction", "order_by", "resolve"}:
         return _deny()
     name = tag.get("name")
     if not isinstance(name, str) or not name or name not in params:
@@ -378,7 +437,7 @@ def _decide_primary(
             return _deny(identity, str(exc))
     elif "clause" in tag:
         return _deny(reason="query clause is only valid for query tags")
-    if "conjunction" in tag and "clause" not in tag:
+    if ("conjunction" in tag or "order_by" in tag) and "clause" not in tag:
         return _deny(reason="conjunction requires a query clause")
     if location == "key" and "separator" in tag:
         try:

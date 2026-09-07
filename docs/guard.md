@@ -342,3 +342,32 @@ keyword: metadata must be boolean; true rejects duplicate JSON-equal array
 values (1 and 1.0 compare equal, while true and 1 differ). False imposes no
 uniqueness requirement. Values are never silently deduplicated, and all other
 unsupported validation keywords retain their existing refusal behavior.
+
+
+## Optional JQL ordering (JAS-48)
+
+A query or body clause tag with `conjunction: true` may declare
+`order_by: ["key", "created", "updated"]`. The list must contain nonempty,
+unique (case-insensitive) simple field names. After a fully proved AND-only
+project filter, this opts into exactly one trailing
+`ORDER BY <permitted-field> [ASC|DESC]`; keywords and field matching are
+case-insensitive. Direction is optional. Multiple fields, unlisted fields,
+functions, quoted grammar tokens, and any trailing predicates or syntax refuse.
+Quoted predicate values remain literal text. OR, NOT, saved filters, missing
+project restrictions and disallowed project identities still refuse. Body JQL
+still requires a matching explicit command identity. Absent `order_by` retains
+the previous refusal of all ordering clauses; malformed opt-in metadata refuses
+even when the particular query has no ordering. Jira opts in only its replacement
+GET/POST issue-search operations so the compatibility backlog can retain its
+literal `ORDER BY key ASC` without dropping or rewriting the caller's query.
+
+
+`{"in":"body","key_paths":["/inwardIssue/key","/outwardIssue/key"],
+"separator":"-"}` is an additive multi-key form (JAS-48, linkIssues).
+Every distinct JSON Pointer is required and must yield one valid scalar issue
+key; every derived project must independently be allowed. A matching explicit
+argv project must identify one of those keys. This permits links between two
+allowed projects without turning alternative body locations into permission to
+ignore one key. Missing/malformed keys, duplicate paths, arrays, conflicting
+metadata forms, and any disallowed project refuse. Numeric issue IDs are not
+project proof. Existing `path` / `paths` agreement semantics do not change.
