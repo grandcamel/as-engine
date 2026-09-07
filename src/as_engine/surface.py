@@ -6,6 +6,7 @@ import json
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 from .errors import SurfaceError, messages_from
@@ -14,7 +15,7 @@ from .params import alias_flags, body_errors, kebab_case, validate_parameters
 from .transforms import Context, Registry, default_registry
 from .transforms.richtext import validate_options
 from .transforms.values import MISSING, set_target, target_value
-from .transport import Response, Transport
+from .transport import Response, Transport, binary_mode
 
 
 def __getattr__(name: str) -> Any:
@@ -167,6 +168,7 @@ class Surface:
         scope_argv_identity: str | None = None,
         representation: str | None = None,
         raw: bool = False,
+        output: str | Path | None = None,
     ) -> Response:
         from assistant_skills_lib.error_handler import BaseAPIError  # type: ignore[import-untyped]
 
@@ -227,7 +229,15 @@ class Surface:
                     problems = body_errors(op, request_body, index.schemas)
                     if problems:
                         raise SurfaceError(None, problems, code=2)
-                result = transport().call(op, params, request_body)
+                try:
+                    if op is operation and output is not None:
+                        result = transport().call(op, params, request_body, output=output)
+                    else:
+                        result = transport().call(op, params, request_body)
+                except OSError as exc:
+                    if not binary_mode(op, output if op is operation else None):
+                        raise
+                    raise ValueError("cannot write binary output") from exc
                 if not 200 <= result.status < 300:
                     raise SurfaceError(
                         result.status, messages_from(result.body) or [f"HTTP {result.status}"]

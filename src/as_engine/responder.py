@@ -6,10 +6,11 @@ from collections import deque
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from math import floor
+from pathlib import Path
 from typing import Any
 
 from .index import NO_EXAMPLE, Operation, OperationIndex
-from .transport import Response
+from .transport import Response, binary_mode, binary_response, multipart_metadata, multipart_mode
 
 
 class _Unset:
@@ -32,6 +33,9 @@ class Responder:
         self._body = body
         self._seeded: dict[str, deque[Response]] = {}
         self.requests: list[tuple[str, dict[str, Any], Any]] = []
+        # Multipart uploads are deliberately observable without retaining their
+        # file contents (or the source paths used to reach them).
+        self.wire_requests: list[dict[str, Any]] = []
 
     def seed(self, operation_id: str, responses: Sequence[Response | Any]) -> None:
         """Replace an operation's response queue with explicit responses.
@@ -52,20 +56,48 @@ class Responder:
         operation: Operation,
         parameters: Mapping[str, Any],
         body: Any,
+        *,
+        output: str | Path | None = None,
     ) -> Response:
         self.requests.append((operation.operationId, deepcopy(dict(parameters)), deepcopy(body)))
+        if multipart_mode(operation):
+            self.wire_requests.append(
+                {
+                    "operationId": operation.operationId,
+                    "parameters": deepcopy(dict(parameters)),
+                    "parts": multipart_metadata(body),
+                    "headers": {"X-Atlassian-Token": "nocheck"},
+                }
+            )
         seeded = self._seeded.get(operation.operationId)
         if seeded is not None:
             if not seeded:
                 raise ValueError(f"seeded responses exhausted for operation {operation.operationId}")
-            return deepcopy(seeded.popleft())
+            response = deepcopy(seeded.popleft())
+            if binary_mode(operation, output) and 200 <= response.status < 300:
+                return binary_response(response, output)
+            return response
         if self._body is not UNSET:
             response_body = deepcopy(self._body)
         elif self._status >= 400:
             response_body = {"message": f"Responder forced HTTP {self._status}"}
         else:
             response_body = self._response_body(operation)
-        return Response(status=self._status, body=response_body)
+        response = Response(status=self._status, body=response_body)
+        if binary_mode(operation, output) and 200 <= response.status < 300:
+            if self._body is UNSET:
+                # A fixed payload makes binary seams useful without inventing a
+                # schema-derived representation of an attachment.
+                response = Response(
+                    status=response.status,
+                    body=("as-engine responder binary " + operation.operationId + "\n").encode(),
+                    headers={
+                        "Content-Type": "application/octet-stream",
+                        "Content-Disposition": 'attachment; filename="attachment.bin"',
+                    },
+                )
+            return binary_response(response, output)
+        return response
 
     def close(self) -> None:
         """Match the live transport lifecycle; no resources are held."""

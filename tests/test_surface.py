@@ -250,3 +250,39 @@ def test_richtext_flags_reserve_spec_parameter_names_and_reject_duplicates(tmp_p
     with pytest.raises(SurfaceError) as error:
         surface.call("createThing", {}, raw=True)
     assert error.value.code == 2
+
+
+def test_surface_binary_output_and_default_name_use_normal_response_metadata(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from as_engine.transport import Response
+
+    indexes = product(tmp_path, **{"x-as-response": {"kind": "binary"}})
+    def factory(_, index):
+        responder = Responder(index)
+        responder.seed("createThing", [Response(200, b"\x00\xff\xfe", {
+            "Content-Type": "image/png", "Content-Disposition": 'attachment; filename="../../safe.png"',
+        })])
+        return responder
+    surface = Surface(indexes, factory, scope_allowlist=("4",))
+    destination = tmp_path / "selected.bin"
+    result = surface.call("createThing", {"spaceId": "4"}, output=destination)
+    assert result.body == {"path": str(destination), "bytes": 3, "content_type": "image/png"}
+    assert destination.read_bytes() == b"\x00\xff\xfe"
+    monkeypatch.chdir(tmp_path)
+    result = surface.call("createThing", {"spaceId": "4"})
+    assert result.body["path"] == "safe.png" and Path("safe.png").read_bytes() == b"\x00\xff\xfe"
+    with pytest.raises(SurfaceError) as error:
+        surface.call("createThing", {"spaceId": "4"}, output=tmp_path / "missing" / "out")
+    assert error.value.code == 2 and error.value.messages == ["cannot write binary output"]
+
+
+def test_surface_ordinary_transport_retains_three_argument_contract(tmp_path):
+    from as_engine.transport import Response
+
+    class LegacyDouble:
+        def call(self, operation, parameters, body):
+            assert operation.operationId == "createThing" and parameters == {"spaceId": 4}
+            return Response(200, body)
+    surface = Surface(product(tmp_path), lambda *_: LegacyDouble(), scope_allowlist=("4",))
+    assert surface.call("createThing", {"spaceId": 4}, {"file": "@literal"}).body == {"file": "@literal"}

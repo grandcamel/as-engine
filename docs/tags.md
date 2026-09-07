@@ -235,3 +235,19 @@ in confluence-as `cli/legacy.py`; the engine preserves it as extension data.
 Executing a registered legacy leaf emits `{status, messages, operation, note}` JSON
 on stderr, exits 2 and never creates a transport. Help remains exit 0. Products
 may tag representative entries `x-as-topic: ["migration"]` for help discovery.
+
+## Binary responses: `x-as-response` (JAS-61)
+
+An operation-level `{"kind":"binary"}` selects streamed file output for successful
+responses. `Surface.call(..., output=path)` supplies a destination; otherwise the
+sanitized Content-Disposition filename (fallback `attachment.bin`) is used in cwd.
+The returned JSON body reports `path`, `bytes`, and `content_type`. Other response
+tag shapes are refused. One same-origin redirect is allowed; all cross-origin
+redirects are refused under the current pinned-document evidence. See
+[binary and multipart contracts](binary.md) for atomic files, retries and doubles.
+
+Multipart needs **no enrichment tag**: `request_media_types` selects
+`multipart/form-data` only when no JSON media type is offered. A body object's
+`@path` values become file parts, other values form fields, and the transport adds
+`X-Atlassian-Token: nocheck`. Upload/update operations that return JSON must not
+receive the binary response tag. New overlay actions retain full Entry provenance.

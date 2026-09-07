@@ -1,6 +1,7 @@
 """Observe cassette files and replay through the public transport interface."""
 
 import base64
+import hashlib
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -28,6 +29,39 @@ class Wire:
 
     def close(self):
         self.closed = True
+
+
+class BinaryWire:
+    def __init__(self, payload, headers=None):
+        self.payload = payload
+        self.headers = headers or {"Content-Type": "image/png"}
+
+    def call(self, operation, parameters, body, *, output=None):
+        assert output is not None
+        Path(output).write_bytes(self.payload)
+        return Response(
+            200,
+            {"path": str(output), "bytes": len(self.payload), "content_type": "image/png"},
+            self.headers,
+        )
+
+
+class BinaryThenHeaderWire:
+    def __init__(self, payload, secret):
+        self.payload = payload
+        self.secret = secret
+        self.calls = 0
+
+    def call(self, operation, parameters, body, *, output=None):
+        self.calls += 1
+        if self.calls == 1:
+            assert output is not None
+            Path(output).write_bytes(self.payload)
+            return Response(
+                200,
+                {"path": str(output), "bytes": len(self.payload), "content_type": "image/png"},
+            )
+        return Response(200, {"ok": True}, {"Authorization": "Bearer " + self.secret})
 
 
 def test_scrubs_echoes_encoded_values_keys_and_hashes_before_writing(tmp_path, operation):
@@ -195,3 +229,144 @@ def test_registered_secrets_replay_and_miss_diagnostics_do_not_echo_values(tmp_p
     with pytest.raises(ValueError) as caught:
         player.call(operation, {"q": "secret-value"}, {"password": "another-secret"})
     assert "secret-value" not in str(caught.value) and "another-secret" not in str(caught.value)
+
+
+def test_json_body_base64_fields_remain_subject_to_normal_scrubbing(tmp_path, operation):
+    path = tmp_path / "session.json"
+    Recorder(
+        Wire(Response(200, {"body_base64": "registered-secret"})),
+        path,
+        scrubber=Scrubber(secrets=["registered-secret"]),
+    ).call(operation, {}, None)
+    raw = path.read_text()
+    assert "registered-secret" not in raw
+    assert json.loads(raw)["interactions"][0]["response"]["body"]["body_base64"] == "<as-secret-1>"
+
+
+def test_multipart_recording_hashes_metadata_without_file_bytes_or_paths(tmp_path, operation):
+    source = tmp_path / "confidential.txt"
+    source.write_bytes(b"confidential multipart payload")
+    operation = replace(
+        operation, operationId="upload", request_media_types=["multipart/form-data"]
+    )
+    path = tmp_path / "session.json"
+
+    Recorder(Wire(Response(201, {"id": "new"})), path).call(
+        operation, {}, {"file": "@" + str(source), "comment": "safe"}
+    )
+
+    raw = path.read_text()
+    entry = json.loads(raw)["interactions"][0]
+    assert entry["body"] == {"multipart": entry["body"]["multipart"]}
+    part = next(part for part in entry["body"]["multipart"] if part["name"] == "file")
+    assert part["filename"] == "confidential.txt"
+    assert "confidential multipart payload" not in raw
+    assert str(source) not in raw
+    assert Player(path).call(
+        operation, {}, {"file": "@" + str(source), "comment": "safe"}
+    ).body == {"id": "new"}
+
+
+def test_binary_recording_snapshots_bytes_and_player_replays_them(tmp_path, operation):
+    operation = replace(
+        operation, operationId="download", extensions={"x-as-response": {"kind": "binary"}}
+    )
+    path = tmp_path / "binary.json"
+    captured = tmp_path / "capture.bin"
+    payload = b"\x00PNG\xffpayload"
+
+    recorder = Recorder(BinaryWire(payload), path)
+    response = recorder.call(operation, {}, None, output=captured)
+    entry = json.loads(path.read_text())["interactions"][0]["response"]
+    assert response.body["path"] == str(captured)
+    assert entry["body"] is None
+    assert base64.b64decode(entry["body_base64"], validate=True) == payload
+    assert str(captured) not in path.read_text()
+    replay_path = tmp_path / "replay.bin"
+    replay = Player(path).call(operation, {}, None, output=replay_path)
+    assert replay_path.read_bytes() == payload
+    assert replay.body["path"] == str(replay_path)
+
+
+def test_invalid_binary_cassette_and_incompatible_replay_fail_closed(tmp_path, operation):
+    operation = replace(
+        operation, operationId="download", extensions={"x-as-response": {"kind": "binary"}}
+    )
+    path = tmp_path / "binary.json"
+    payload = {
+        "format_version": 1,
+        "interactions": [
+            {
+                "operationId": "download",
+                "parameters": {},
+                "body": None,
+                "body_sha256": hashlib.sha256(b"null").hexdigest(),
+                "response": {
+                    "status": 200,
+                    "headers": {},
+                    "body": None,
+                    "body_base64": "%%%",
+                },
+            }
+        ],
+    }
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="invalid cassette binary response"):
+        Player(path)
+
+    payload["interactions"][0]["response"]["body_base64"] = base64.b64encode(b"ok").decode()
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="requires a binary operation"):
+        Player(path).call(replace(operation, extensions={}), {}, None)
+
+
+def test_binary_cassette_preserves_base64_and_refuses_discovered_payload_secrets(tmp_path, operation):
+    operation = replace(
+        operation, operationId="download", extensions={"x-as-response": {"kind": "binary"}}
+    )
+    coincidence = base64.b64encode(b"abc").decode()
+    path = tmp_path / "coincidence.json"
+    Recorder(BinaryWire(b"abc"), path, scrubber=Scrubber(secrets=[coincidence])).call(
+        operation, {}, None, output=tmp_path / "coincidence.bin"
+    )
+    assert json.loads(path.read_text())["interactions"][0]["response"]["body_base64"] == coincidence
+    assert Player(path).call(operation, {}, None, output=tmp_path / "replay.bin")
+
+    secret = "header-discovered-secret"
+    blocked = tmp_path / "blocked.json"
+    with pytest.raises(ValueError, match="registered secret"):
+        Recorder(
+            BinaryWire(b"prefix-" + secret.encode(), {"Authorization": "Bearer " + secret}),
+            blocked,
+        ).call(operation, {}, None, output=tmp_path / "blocked.bin")
+    assert not blocked.exists()
+
+    later = tmp_path / "later.json"
+    recorder = Recorder(BinaryThenHeaderWire(b"prefix-" + secret.encode(), secret), later)
+    recorder.call(operation, {}, None, output=tmp_path / "first.bin")
+    with pytest.raises(ValueError, match="registered secret"):
+        recorder.call(replace(operation, operationId="other", extensions={}), {}, None)
+    assert len(json.loads(later.read_text())["interactions"]) == 1
+
+
+def test_player_rejects_non_2xx_or_missing_binary_body(tmp_path, operation):
+    operation = replace(
+        operation, operationId="download", extensions={"x-as-response": {"kind": "binary"}}
+    )
+    path = tmp_path / "binary.json"
+    body_hash = hashlib.sha256(b"null").hexdigest()
+    interaction = {
+        "operationId": "download",
+        "parameters": {},
+        "body": None,
+        "body_sha256": body_hash,
+        "response": {"status": 302, "headers": {}, "body": None, "body_base64": "b2s="},
+    }
+    path.write_text(json.dumps({"format_version": 1, "interactions": [interaction]}))
+    with pytest.raises(ValueError, match="2xx"):
+        Player(path).call(operation, {}, None, output=tmp_path / "ignored.bin")
+
+    interaction["response"] = {"status": 200, "headers": {}, "body": {"not": "binary"}}
+    path.write_text(json.dumps({"format_version": 1, "interactions": [interaction]}))
+    with pytest.raises(ValueError, match="missing body_base64"):
+        Player(path).call(operation, {}, None, output=tmp_path / "ignored.bin")

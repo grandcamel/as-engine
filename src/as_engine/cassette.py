@@ -16,7 +16,14 @@ from typing import Any
 from urllib.parse import quote, quote_plus
 
 from .index import Operation
-from .transport import Response, Transport
+from .transport import (
+    Response,
+    Transport,
+    binary_mode,
+    binary_response,
+    multipart_metadata,
+    multipart_mode,
+)
 
 
 def _json(value: Any) -> str:
@@ -59,6 +66,10 @@ class Scrubber:
         placeholder = f"<as-{kind}-{self._counts[kind]}>"
         for variant in (value, quote(value, safe=""), quote_plus(value), json.dumps(value)[1:-1]):
             self._replacements.setdefault(variant, placeholder)
+
+    def occurs_in_bytes(self, value: bytes) -> bool:
+        """Return whether a registered literal occurs in an opaque payload."""
+        return any(secret.encode() in value for secret in self._replacements)
 
     def discover(self, value: Any, parent: str = "") -> None:
         if isinstance(value, Mapping):
@@ -132,6 +143,37 @@ def _key(entry: Mapping[str, Any]) -> str:
     return _json([entry["operationId"], entry["parameters"], entry["body_sha256"]])
 
 
+def _scrub_entries_preserving_binary(
+    entries: Iterable[Mapping[str, Any]], scrubber: Scrubber
+) -> list[dict[str, Any]]:
+    """Scrub normal JSON while preserving only a binary response envelope."""
+    clean_entries: list[dict[str, Any]] = []
+    for entry in entries:
+        candidate = deepcopy(dict(entry))
+        response = candidate.get("response")
+        binary_base64: str | None = None
+        if isinstance(response, dict) and "body_base64" in response:
+            binary_base64 = response.pop("body_base64")
+        clean = scrubber.scrub(candidate)
+        if binary_base64 is not None:
+            clean["response"]["body_base64"] = binary_base64
+        clean_entries.append(clean)
+    return clean_entries
+
+
+def _refuse_binary_secrets(entries: Iterable[Mapping[str, Any]], scrubber: Scrubber) -> None:
+    for entry in entries:
+        response = entry.get("response")
+        if not isinstance(response, Mapping) or "body_base64" not in response:
+            continue
+        try:
+            payload = base64.b64decode(response["body_base64"], validate=True)
+        except (ValueError, TypeError) as exc:
+            raise ValueError("invalid cassette binary response") from exc
+        if scrubber.occurs_in_bytes(payload):
+            raise ValueError("refusing to record binary response containing a registered secret")
+
+
 def _load(path: Path) -> list[dict[str, Any]]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -156,7 +198,17 @@ def _load(path: Path) -> list[dict[str, Any]]:
                 isinstance(k, str) and isinstance(v, str) for k, v in response["headers"].items()
             ):
                 raise ValueError("invalid cassette response headers")
-            _json(response["body"])
+            has_binary = "body_base64" in response
+            if has_binary:
+                encoded = response["body_base64"]
+                if not isinstance(encoded, str) or response.get("body") is not None:
+                    raise ValueError("invalid cassette binary response")
+                try:
+                    base64.b64decode(encoded, validate=True)
+                except (ValueError, TypeError) as exc:
+                    raise ValueError("invalid cassette binary response") from exc
+            else:
+                _json(response["body"])
             key = _key(entry)
             if key in keys:
                 raise ValueError("duplicate cassette request")
@@ -183,24 +235,55 @@ class Recorder:
             raise ValueError("cassette recording path already exists; choose a new session path")
         self._entries: list[dict[str, Any]] = []
 
-    def call(self, operation: Operation, parameters: Mapping[str, Any], body: Any) -> Response:
+    def call(
+        self,
+        operation: Operation,
+        parameters: Mapping[str, Any],
+        body: Any,
+        *,
+        output: str | Path | None = None,
+    ) -> Response:
         # Validate JSON before sending, and snapshot before a wrapped transport mutates inputs.
+        cassette_body = {"multipart": multipart_metadata(body)} if multipart_mode(operation) else body
         request = deepcopy(
-            {"operationId": operation.operationId, "parameters": dict(parameters), "body": body}
+            {"operationId": operation.operationId, "parameters": dict(parameters), "body": cassette_body}
         )
         _json(request)
-        response = self.transport.call(operation, parameters, body)
+        response = (
+            self.transport.call(operation, parameters, body, output=output)
+            if output is not None
+            else self.transport.call(operation, parameters, body)
+        )
+        response_body = deepcopy(response.body)
+        response_entry: dict[str, Any] = {
+            "status": response.status,
+            "headers": dict(response.headers),
+            "body": response_body,
+        }
+        if binary_mode(operation, output) and 200 <= response.status < 300:
+            if (
+                not isinstance(response.body, Mapping)
+                or not isinstance(response.body.get("path"), str)
+                or type(response.body.get("bytes")) is not int
+                or not isinstance(response.body.get("content_type"), str)
+            ):
+                raise ValueError("binary transport response must contain output metadata")
+            try:
+                binary_payload = Path(response.body["path"]).read_bytes()
+            except OSError as exc:
+                raise ValueError("binary transport response output is unreadable") from exc
+            if response.body["bytes"] != len(binary_payload):
+                raise ValueError("binary transport response byte count does not match output")
+            response_entry["body"] = None
+            response_entry["body_base64"] = base64.b64encode(binary_payload).decode("ascii")
         entry = {
             **request,
-            "response": {
-                "status": response.status,
-                "headers": dict(response.headers),
-                "body": deepcopy(response.body),
-            },
+            "response": response_entry,
         }
         pending = [*self._entries, entry]
         self.scrubber.discover(pending)
-        clean = self.scrubber.scrub(pending)
+        _refuse_binary_secrets(pending, self.scrubber)
+        clean = _scrub_entries_preserving_binary(pending, self.scrubber)
         unique: dict[str, dict[str, Any]] = {}
         for item in clean:
             item["body_sha256"] = _hash(item["body"])
@@ -208,14 +291,14 @@ class Recorder:
             if key in unique and unique[key]["response"] != item["response"]:
                 raise ValueError("cassette has conflicting responses for " + operation.operationId)
             unique[key] = item
-        payload = _json({"format_version": 1, "interactions": list(unique.values())}) + "\n"
+        cassette_payload = _json({"format_version": 1, "interactions": list(unique.values())}) + "\n"
         temporary: Path | None = None
         try:
             with tempfile.NamedTemporaryFile(
                 mode="w", encoding="utf-8", dir=self.path.parent, delete=False
             ) as stream:
                 temporary = Path(stream.name)
-                stream.write(payload)
+                stream.write(cassette_payload)
             temporary.replace(self.path)
         finally:
             if temporary is not None:
@@ -237,11 +320,19 @@ class Player:
         self.scrubber = scrubber or Scrubber()
         self._entries = {_key(entry): entry for entry in _load(Path(path))}
 
-    def call(self, operation: Operation, parameters: Mapping[str, Any], body: Any) -> Response:
+    def call(
+        self,
+        operation: Operation,
+        parameters: Mapping[str, Any],
+        body: Any,
+        *,
+        output: str | Path | None = None,
+    ) -> Response:
+        cassette_body = {"multipart": multipart_metadata(body)} if multipart_mode(operation) else body
         request = {
             "operationId": operation.operationId,
             "parameters": dict(parameters),
-            "body": body,
+            "body": cassette_body,
         }
         self.scrubber.discover(request)
         request = self.scrubber.scrub(request)
@@ -254,6 +345,21 @@ class Player:
                 f"body_sha256={request['body_sha256']}"
             )
         response = deepcopy(entry["response"])
+        if "body_base64" in response:
+            if not binary_mode(operation, output):
+                raise ValueError("cassette binary response requires a binary operation or explicit output")
+            if not 200 <= response["status"] < 300:
+                raise ValueError("cassette binary response must have a 2xx status")
+            try:
+                payload = base64.b64decode(response["body_base64"], validate=True)
+            except (ValueError, TypeError) as exc:
+                raise ValueError("invalid cassette binary response") from exc
+            return binary_response(Response(response["status"], payload, response["headers"]), output)
+        if (
+            operation.extensions.get("x-as-response") == {"kind": "binary"}
+            and 200 <= response["status"] < 300
+        ):
+            raise ValueError("cassette binary response is missing body_base64")
         return Response(response["status"], response["body"], response["headers"])
 
     def close(self) -> None:

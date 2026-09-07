@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from as_engine.index import Operation, OperationIndex
 from as_engine.output import render_output
 from as_engine.responder import Responder
@@ -233,3 +235,61 @@ def test_responder_seeded_queues_are_isolated_and_defensively_copied():
 
     assert first.body == {"items": ["original", "changed after call"]}
     assert second.body == {"items": ["second"]}
+
+
+def test_responder_records_multipart_wire_metadata_without_file_contents(tmp_path):
+    upload = tmp_path / "private-upload.txt"
+    upload.write_bytes(b"not-for-the-wire")
+    operation = _operation(
+        operationId="uploadWidget",
+        method="POST",
+        request_media_types=["multipart/form-data"],
+    )
+    responder = Responder(OperationIndex({operation.operationId: operation}, {}))
+
+    responder.call(operation, {"id": 4}, {"file": "@" + str(upload), "comment": "hello"})
+
+    wire = responder.wire_requests
+    assert responder.requests[0][0] == "uploadWidget"
+    assert wire[0]["headers"] == {"X-Atlassian-Token": "nocheck"}
+    part = next(part for part in wire[0]["parts"] if part["name"] == "file")
+    assert part["filename"] == "private-upload.txt"
+    assert part["size"] == len(b"not-for-the-wire")
+    assert "not-for-the-wire" not in repr(wire)
+    assert str(upload) not in repr(wire)
+
+
+def test_responder_binary_mode_writes_deterministic_bytes_and_honors_seed(tmp_path):
+    operation = _operation(
+        operationId="downloadWidget", extensions={"x-as-response": {"kind": "binary"}}
+    )
+    responder = Responder(OperationIndex({operation.operationId: operation}, {}))
+    target = tmp_path / "generated.bin"
+
+    response = responder.call(operation, {}, None, output=target)
+
+    assert target.read_bytes() == b"as-engine responder binary downloadWidget\n"
+    assert response.body["path"] == str(target)
+    responder.seed(operation.operationId, [Response(200, b"seeded"), Response(404, {"error": "no"})])
+    responder.call(operation, {}, None, output=tmp_path / "seeded.bin")
+    assert (tmp_path / "seeded.bin").read_bytes() == b"seeded"
+    assert responder.call(operation, {}, None, output=tmp_path / "missing.bin") == Response(
+        404, {"error": "no"}
+    )
+
+
+def test_responder_binary_seed_and_explicit_body_require_bytes(tmp_path):
+    operation = _operation(
+        operationId="downloadWidget", extensions={"x-as-response": {"kind": "binary"}}
+    )
+    responder = Responder(OperationIndex({operation.operationId: operation}, {}), body=b"override")
+    responder.call(operation, {}, None, output=tmp_path / "override.bin")
+    assert (tmp_path / "override.bin").read_bytes() == b"override"
+
+    responder.seed(operation.operationId, ["not bytes"])
+    with pytest.raises(ValueError, match="binary response body must be bytes"):
+        responder.call(operation, {}, None, output=tmp_path / "bad-seed.bin")
+    with pytest.raises(ValueError, match="binary response body must be bytes"):
+        Responder(OperationIndex({operation.operationId: operation}, {}), body="not bytes").call(
+            operation, {}, None, output=tmp_path / "bad-body.bin"
+        )

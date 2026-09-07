@@ -87,9 +87,14 @@ oneOf branches. Schema repair belongs in a product overlay.
 
 `HTTPTransport` serializes path/query/header/cookie parameters, pools requests,
 applies timeouts, and retries explicit 429 and all 5xx responses with exponential
-backoff and numeric/date Retry-After. It never retries a 409, connection exception
-or follows a redirect. Retries on mutation responses follow the existing product
-policy. Bodies are JSON; operations requiring non-JSON media types fail explicitly.
+backoff and numeric/date Retry-After. It never retries a 409 or connection exception.
+Retries on mutation responses follow the existing product policy. JSON bodies retain
+their encoding; non-JSON `multipart/form-data` operations accept object fields with
+`@path` file parts. Binary-tagged operations stream to atomic files, return metadata,
+and allow one same-origin redirect; all cross-origin redirects are refused. Python
+consumers select destinations with `Surface.call(..., output=path)`. Responder,
+cassette and simulation modes cover both encodings offline; see
+[the binary and multipart contract](docs/binary.md).
 `Surface.call(..., all_pages=True, limit=120)` follows `x-as-paging`, returns
 its merged items array, and reports `count=120` through the warning callback;
 one page is the default and the operation's `parameters["limit"]` remains page

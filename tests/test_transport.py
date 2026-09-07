@@ -162,7 +162,7 @@ def test_style_serialization_and_non_json_refusal():
         assert "filter%5Bactive%5D=true" in wire.sent[0][0].url
         assert wire.sent[0][0].headers["Cookie"] == "visit=x"
         with pytest.raises(ValueError, match="JSON"):
-            t.call(replace(op, request_media_types=["multipart/form-data"]), {}, {})
+            t.call(replace(op, request_media_types=["text/plain"]), {}, {})
     assert len(wire.sent) == 1
 
 

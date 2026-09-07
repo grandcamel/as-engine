@@ -7,12 +7,21 @@ at a Confluence response.
 
 from __future__ import annotations
 
+import base64
 from collections.abc import Mapping
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 from .index import Operation
-from .transport import Response
+from .transport import (
+    Response,
+    binary_mode,
+    binary_response,
+    multipart_metadata,
+    multipart_mode,
+    multipart_parts,
+)
 
 
 def _default_seed() -> dict[str, Any]:
@@ -28,6 +37,12 @@ def _default_seed() -> dict[str, Any]:
                 "body": {"representation": "storage", "value": "<p>Second</p>"},
                 "version": {"number": 1},
             },
+        ],
+        "attachments": [
+            {"id": "att1", "pageId": "1", "title": "first.bin",
+             "mediaType": "application/octet-stream", "data_base64": "AAEC/w=="},
+            {"id": "att2", "pageId": "1", "title": "second.txt",
+             "mediaType": "text/plain", "data_base64": "U2Vjb25kXG4="},
         ],
         "blogposts": [],
         "templates": [],
@@ -46,6 +61,7 @@ class SimulationStore:
         "spaces",
         "pages",
         "blogposts",
+        "attachments",
         "templates",
         "users",
         "groups",
@@ -65,6 +81,7 @@ class SimulationStore:
         self.spaces = state["spaces"]
         self.pages = state["pages"]
         self.blogposts = state["blogposts"]
+        self.attachments = state["attachments"]
         self.templates = state["templates"]
         self.users = state["users"]
         self.groups = state["groups"]
@@ -72,6 +89,7 @@ class SimulationStore:
         self.space_permissions = state["space_permissions"]
         self.properties = state["properties"]
         self.calls: list[tuple[str, dict[str, Any], Any]] = []
+        self.wire_requests: list[dict[str, Any]] = []
 
     def snapshot(self) -> dict[str, Any]:
         """Return detached JSON-compatible state; calls remain available separately."""
@@ -88,15 +106,91 @@ class Simulation:
     def close(self) -> None:
         """Match the transport lifecycle; simulation owns no resources."""
 
-    def call(self, operation: Operation, parameters: Mapping[str, Any], body: Any) -> Response:
+    def call(
+        self, operation: Operation, parameters: Mapping[str, Any], body: Any,
+        *, output: str | Path | None = None,
+    ) -> Response:
         name = operation.operationId
         params = deepcopy(dict(parameters))
         payload = deepcopy(body)
         self.calls.append((name, params, payload))
+        if multipart_mode(operation):
+            self.store.wire_requests.append({
+                "operationId": name, "parameters": deepcopy(params),
+                "parts": multipart_metadata(body), "headers": {"X-Atlassian-Token": "nocheck"},
+            })
         handler = getattr(self, f"_op_{name}", None)
         if handler is None:
             return self._error(501, f"simulation does not support operation: {name}")
-        return handler(params, payload)
+        response = handler(params, payload)
+        return binary_response(response, output) if binary_mode(operation, output) else response
+
+    @staticmethod
+    def _attachment_metadata(item: dict[str, Any]) -> dict[str, Any]:
+        return deepcopy({k: v for k, v in item.items() if k != "data_base64"})
+
+    def _attachment(self, attachment_id: Any) -> dict[str, Any] | None:
+        return next((item for item in self.store.attachments
+                     if self._id(item.get("id")) == self._id(attachment_id)), None)
+
+    def _op_getPageAttachments(self, params: dict[str, Any], _body: Any) -> Response:
+        if self._content(params["id"]) is None:
+            return self._error(404, "Page not found")
+        items = [self._attachment_metadata(item) for item in self.store.attachments
+                 if self._id(item.get("pageId")) == self._id(params["id"])]
+        offset = int(params.get("cursor", 0))
+        limit = int(params.get("limit", 25))
+        if offset < 0 or limit < 1:
+            return self._error(400, "Invalid attachment page bounds")
+        links = {"next": f"?cursor={offset + limit}"} if offset + limit < len(items) else {}
+        return Response(200, {"results": items[offset:offset + limit], "_links": links})
+
+    def _op_getAttachmentById(self, params: dict[str, Any], _body: Any) -> Response:
+        item = self._attachment(params["id"])
+        return (Response(200, self._attachment_metadata(item)) if item is not None
+                else self._error(404, "Attachment not found"))
+
+    def _op_downloadAttatchment(self, params: dict[str, Any], _body: Any) -> Response:
+        item = self._attachment(params["attachmentId"])
+        if item is None or self._id(item.get("pageId", item.get("blogPostId"))) != self._id(params["id"]):
+            return self._error(404, "Attachment not found on page")
+        try:
+            content = base64.b64decode(item.get("data_base64", ""), validate=True)
+        except (ValueError, TypeError) as exc:
+            raise ValueError("invalid simulation attachment data_base64") from exc
+        return Response(200, content, {
+            "Content-Type": item.get("mediaType", "application/octet-stream"),
+            "Content-Disposition": 'attachment; filename="' + item.get("title", "attachment.bin") + '"',
+        })
+
+    def _attachment_upload(self, params: dict[str, Any], body: Any, *, update: bool) -> Response:
+        if self._content(params["id"]) is None:
+            return self._error(404, "Page not found")
+        parts = dict(multipart_parts(body))
+        if "file" not in parts or parts["file"][0] is None:
+            return self._error(400, "Attachment upload requires a file part")
+        filename, content, content_type = parts["file"]
+        if update:
+            item = self._attachment(params["attachmentId"])
+            if item is None or self._id(item.get("pageId", item.get("blogPostId"))) != self._id(params["id"]):
+                return self._error(404, "Attachment not found on page")
+        else:
+            number = 1
+            while self._attachment(f"att{number}") is not None:
+                number += 1
+            item = {"id": f"att{number}", "pageId": self._id(params["id"])}
+            self.store.attachments.append(item)
+        item.update({"title": filename, "mediaType": content_type, "fileSize": len(content),
+                     "data_base64": base64.b64encode(content).decode("ascii"),
+                     "version": {"number": item.get("version", {}).get("number", 0) + 1}})
+        metadata = self._attachment_metadata(item)
+        return Response(200, metadata if update else {"results": [metadata]})
+
+    def _op_createAttachment(self, params: dict[str, Any], body: Any) -> Response:
+        return self._attachment_upload(params, body, update=False)
+
+    def _op_updateAttachmentData(self, params: dict[str, Any], body: Any) -> Response:
+        return self._attachment_upload(params, body, update=True)
 
     @staticmethod
     def _error(status: int, message: str) -> Response:

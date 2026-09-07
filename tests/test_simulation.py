@@ -92,3 +92,42 @@ assert 'requests' in sys.modules
         [sys.executable, "-c", program], capture_output=True, check=False, text=True
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_attachment_upload_update_download_and_paging_through_simulation(tmp_path):
+    import base64
+    from dataclasses import replace
+
+    store = SimulationStore({"attachments": []})
+    sim = Simulation(store)
+    file = tmp_path / "payload.bin"
+    content = b"\x00\xff\xfe\n"
+    file.write_bytes(content)
+    upload = replace(operation("createAttachment"), request_media_types=["multipart/form-data"])
+    created = sim.call(upload, {"id": "1"}, {"file": f"@{file}", "minorEdit": True})
+    attachment = created.body["results"][0]
+    assert attachment["id"] == "att1" and attachment["fileSize"] == len(content)
+    assert "data_base64" not in attachment
+    assert store.snapshot()["attachments"][0]["data_base64"] == base64.b64encode(content).decode()
+    assert store.wire_requests[0]["headers"] == {"X-Atlassian-Token": "nocheck"}
+    assert store.wire_requests[0]["parts"][0]["size"] == len(content)
+    metadata = sim.call(operation("getAttachmentById"), {"id": "att1"}, None)
+    assert metadata.body["pageId"] == "1" and "data_base64" not in metadata.body
+    download = replace(operation("downloadAttatchment"), extensions={"x-as-response": {"kind": "binary"}})
+    destination = tmp_path / "download.bin"
+    assert sim.call(download, {"id": "1", "attachmentId": "att1"}, None, output=destination).body["bytes"] == len(content)
+    assert destination.read_bytes() == content
+    file.write_bytes(b"updated")
+    update = replace(operation("updateAttachmentData"), request_media_types=["multipart/form-data"])
+    changed = sim.call(update, {"id": "1", "attachmentId": "att1"}, {"file": f"@{file}"})
+    assert changed.body["version"]["number"] == 2
+    sim.call(download, {"id": "1", "attachmentId": "att1"}, None, output=destination)
+    assert destination.read_bytes() == b"updated"
+    sim.call(upload, {"id": "1"}, {"file": f"@{file}"})
+    first = sim.call(operation("getPageAttachments"), {"id": "1", "limit": 1}, None)
+    assert len(first.body["results"]) == 1 and first.body["_links"]["next"] == "?cursor=1"
+    second = sim.call(operation("getPageAttachments"), {"id": "1", "limit": 1, "cursor": "1"}, None)
+    assert len(second.body["results"]) == 1 and second.body["_links"] == {}
+    assert sim.call(download, {"id": "2", "attachmentId": "att1"}, None, output=tmp_path / "wrong").status == 404
+    assert not (tmp_path / "wrong").exists()
+    assert sim.call(operation("getAttachmentById"), {"id": "absent"}, None).status == 404
