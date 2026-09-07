@@ -270,3 +270,26 @@ Jira's environment-selected automatic field wrapping remains product policy
 until that product migrates to tagged fields; it is not installed globally by
 importing the converter package. Existing products continue using their own
 helpers until phase B/product migration explicitly switches the call path.
+
+## Jira static fields and bulk input (JAS-47)
+
+A request descriptor may declare `itemsPath: "/issueUpdates"`; its `path`
+(e.g. `/fields/description`) is relative to each item. The collection must be
+an array when present. Supply bulk JSON through `--body @request.json`, stdin,
+or `--field 'issueUpdates=[...]'`. Dotted `--field` paths do not address array
+items; relative item paths never become top-level Markdown destinations.
+Missing optional fields remain absent; caller data is copied before conversion.
+
+Direct ADF object request/response descriptors may set `nullable: true` to
+preserve explicit JSON null (for example an empty Jira environment). The
+flag is opt-in; malformed non-null values and other representations keep their
+existing refusal behavior. Literal `--field fields.description=null` is still
+Markdown text; use a JSON body for a null field value.
+
+`customFields: "textarea"` on a request-bearing descriptor records that the
+containing free map's textarea fields require ADF. JAS-47 converts only static
+paths: custom fields pass through unchanged, including already encoded ADF.
+Automatic per-instance selection and a per-call override are deferred to
+JAS-49. No field-name guessing, environment lookup or envelope workaround is
+installed by this marker. Single-representation Jira entries explicitly set
+`x-as-representation: {"default": "adf"}` for product CLI call help.

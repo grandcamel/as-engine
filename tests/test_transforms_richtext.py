@@ -356,3 +356,98 @@ def test_encoded_malformed_adf_is_refused_before_transport(tmp_path, document):
             "write", {}, {"body": {"representation": "atlas_doc_format", "value": document}}
         )
     assert caught.value.code == 2 and wire.requests == []
+
+
+def jira_value_tags(*, bulk=False, nullable=False):
+    descriptors = []
+    for name in ("description", "environment"):
+        location = {"path": f"/fields/{name}", "shape": "value", "nullable": nullable}
+        request = {**location, **({"itemsPath": "/issueUpdates"} if bulk else {})}
+        descriptors.append(
+            {
+                "representations": {"adf": {"converter": "adf", "encoding": "object"}},
+                "request": request,
+                "response": location,
+                "customFields": "textarea",
+            }
+        )
+    return {"x-as-richtext": descriptors, "x-as-representation": {"default": "adf"}}
+
+
+def test_bulk_request_converts_each_item_without_guessing_custom_fields(tmp_path):
+    surface, wire = surface_for(tmp_path, {"bulk": ("post", jira_value_tags(bulk=True))})
+    original = {
+        "issueUpdates": [
+            {"fields": {"description": "# First", "customfield_10010": "**untouched**"}},
+            {"fields": {"environment": "second", "description": DOC}},
+            {"fields": {"summary": "third"}},
+        ]
+    }
+    before = deepcopy(original)
+    surface.call("bulk", {}, original)
+    sent = wire.requests[-1][2]["issueUpdates"]
+    assert validate_adf(sent[0]["fields"]["description"])
+    assert validate_adf(sent[1]["fields"]["environment"])
+    assert sent[0]["fields"]["customfield_10010"] == "**untouched**"
+    assert sent[1]["fields"]["description"] == DOC
+    assert sent[2] == original["issueUpdates"][2] and original == before
+
+
+@pytest.mark.parametrize("items", [None, {}, "not an array"])
+def test_bad_bulk_shape_fails_before_any_transport(tmp_path, items):
+    surface, wire = surface_for(tmp_path, {"bulk": ("post", jira_value_tags(bulk=True))})
+    with pytest.raises(SurfaceError, match="itemsPath must identify an array"):
+        surface.call("bulk", {}, {"issueUpdates": items})
+    assert wire.requests == []
+
+
+@pytest.mark.parametrize("nullable", [False, True])
+def test_direct_adf_null_requires_explicit_nullable_tag(tmp_path, nullable):
+    surface, wire = surface_for(tmp_path, {"write": ("post", jira_value_tags(nullable=nullable))})
+    body = {"fields": {"description": None, "environment": DOC}}
+    wire.seed("write", [body])
+    if not nullable:
+        with pytest.raises(SurfaceError):
+            surface.call("write", {}, body)
+        assert wire.requests == []
+        return
+    result = surface.call("write", {}, body)
+    assert wire.requests[-1][2] == body
+    assert result.body["fields"]["description"] is None
+    assert "mention" in result.body["fields"]["environment"]
+    wire.seed("write", [body])
+    assert surface.call("write", {}, body, raw=True).body == body
+
+
+def test_bulk_paths_do_not_reinterpret_top_level_field_input(tmp_path):
+    from as_engine.params import build_body
+
+    surface, wire = surface_for(tmp_path, {"bulk": ("post", jira_value_tags(bulk=True))})
+    _, _, operation = surface.resolve("bulk")
+    payload = build_body(
+        None,
+        ["fields.description=null", 'issueUpdates=[{"fields":{"description":"Hi"}}]'],
+        operation=operation,
+    )
+    assert payload["fields"]["description"] is None
+    surface.call("bulk", {}, payload)
+    assert wire.requests[-1][2]["fields"]["description"] is None
+    assert validate_adf(wire.requests[-1][2]["issueUpdates"][0]["fields"]["description"])
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"customFields": "guess"},
+        {"request": {"path": "/fields/description", "shape": "value", "nullable": "yes"}},
+        {"request": {"path": "/fields/description", "shape": "envelope", "nullable": True}},
+        {"request": {"path": "/fields/description", "shape": "value", "itemsPath": 1}},
+    ],
+)
+def test_jira_additive_descriptor_options_fail_closed(tmp_path, change):
+    tags = jira_value_tags()
+    tags["x-as-richtext"][0].update(change)
+    surface, wire = surface_for(tmp_path, {"write": ("post", tags)})
+    with pytest.raises(SurfaceError):
+        surface.call("write", {}, {"fields": {"description": "hello"}})
+    assert wire.requests == []

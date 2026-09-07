@@ -80,12 +80,23 @@ def _descriptors(operation: Any) -> tuple[list[dict[str, Any]], dict[str, Any] |
             parts(value["path"])
             if not isinstance(value.get("shape"), str) or value["shape"] not in shapes:
                 _fail(f"unknown rich-text {hook} shape")
-            if hook == "request" and "itemsPath" in value:
-                _fail("rich-text request does not support itemsPath")
-            if hook == "response" and "itemsPath" in value:
+            if "itemsPath" in value:
                 if not isinstance(value["itemsPath"], str):
-                    _fail("rich-text response itemsPath must be a JSON Pointer")
+                    _fail(f"rich-text {hook} itemsPath must be a JSON Pointer")
                 parts(value["itemsPath"])
+            if "nullable" in value:
+                if not isinstance(value["nullable"], bool):
+                    _fail("rich-text nullable must be a boolean")
+                if value["nullable"] and (
+                    value["shape"] != "value"
+                    or any(
+                        rep != {"converter": "adf", "encoding": "object"}
+                        for rep in representations.values()
+                    )
+                ):
+                    _fail("nullable rich text requires a direct ADF object value")
+        if "customFields" in tag and (tag["customFields"] != "textarea" or "request" not in tag):
+            _fail("customFields must declare the textarea request rule")
         if "request" not in tag and "response" not in tag:
             _fail("rich-text descriptor needs a request or response")
         result.append(tag)
@@ -188,15 +199,40 @@ def validate_options(
         request = tag.get("request")
         if request is None:
             continue
-        value = pointer(body, request["path"])
-        if value is not MISSING and request["shape"] == "envelope" and not isinstance(value, str):
-            _request_envelope(value, tag, chosen, representation, encode_value=False)
+        for path in _request_targets(body, request):
+            value = pointer(body, path)
+            if (
+                value is not MISSING
+                and request["shape"] == "envelope"
+                and not isinstance(value, str)
+            ):
+                _request_envelope(value, tag, chosen, representation, encode_value=False)
+
+
+def _request_targets(body: Any, request: Mapping[str, Any]) -> list[str]:
+    """Expand a declared request collection without guessing field names."""
+    if "itemsPath" not in request:
+        return [request["path"]]
+    items_path = request["itemsPath"]
+    items = pointer(body, items_path)
+    if items is MISSING:
+        return []
+    if not isinstance(items, list):
+        _fail("rich-text request itemsPath must identify an array")
+    return [f"{items_path}/{index}{request['path']}" for index in range(len(items))]
 
 
 def request_paths(operation: Any) -> list[str]:
     """Return validated rich-text destinations for CLI field parsing."""
     descriptors, _ = _descriptors(operation)
-    return [tag["request"]["path"] for tag in descriptors if "request" in tag]
+    # Bulk callers supply JSON with --body or --field collection=[...]. Dotted
+    # field parsing cannot address array items; never mistake a relative item
+    # path for a top-level destination.
+    return [
+        tag["request"]["path"]
+        for tag in descriptors
+        if "request" in tag and "itemsPath" not in tag["request"]
+    ]
 
 
 def _replace(value: Any, path: str, replacement: Any) -> Any:
@@ -249,23 +285,24 @@ class RichText(Transform):
             if request is None:
                 continue
             chosen = _selected(descriptor, representation_tag, override)
-            value = pointer(body, request["path"])
-            if value is MISSING:
-                continue
-            if request["shape"] == "envelope":
-                replacement = (
-                    _markdown_envelope(value, descriptor, chosen)
-                    if isinstance(value, str)
-                    else _request_envelope(value, descriptor, chosen, override)
-                )
-            elif isinstance(value, str):
-                # A direct string is always literal Markdown; never sniff JSON here.
-                replacement = _markdown_envelope(value, descriptor, chosen)["value"]
-            else:
-                replacement = _encoded(
-                    value, descriptor["representations"][chosen], allow_adf_object=True
-                )
-            body = _replace(body, request["path"], replacement)
+            for path in _request_targets(body, request):
+                value = pointer(body, path)
+                if value is MISSING or (value is None and request.get("nullable", False)):
+                    continue
+                if request["shape"] == "envelope":
+                    replacement = (
+                        _markdown_envelope(value, descriptor, chosen)
+                        if isinstance(value, str)
+                        else _request_envelope(value, descriptor, chosen, override)
+                    )
+                elif isinstance(value, str):
+                    # A direct string is always literal Markdown; never sniff JSON here.
+                    replacement = _markdown_envelope(value, descriptor, chosen)["value"]
+                else:
+                    replacement = _encoded(
+                        value, descriptor["representations"][chosen], allow_adf_object=True
+                    )
+                body = _replace(body, path, replacement)
         context.body = body
 
     def response(self, context: Context, tag: Any, response: Any) -> Any:
@@ -294,7 +331,7 @@ class RichText(Transform):
                     _fail("rich-text itemsPath must identify an array")
             for item_index, item in enumerate(items):
                 value = pointer(item, response_tag["path"])
-                if value is MISSING:
+                if value is MISSING or (value is None and response_tag.get("nullable", False)):
                     continue
                 shape = response_tag["shape"]
                 replacement: Any

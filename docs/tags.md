@@ -274,3 +274,14 @@ The default total/isLast contract and count-based advance remain unchanged.
 This tag is valid only when the endpoint's empty-page and page-size semantics
 support the intended traversal; it cannot prove exhaustion after server-side
 filtering or compensate for an undocumented server page-size clamp.
+
+## Jira rich-text additions (JAS-47)
+
+Within an `x-as-richtext` descriptor, request `itemsPath` names an array and
+`path` is relative to each member; bulk JSON is supplied as a body or collection
+field. Direct ADF object request/response descriptors may explicitly declare
+`nullable: true`; null is preserved only with that flag. A request descriptor's
+`customFields: "textarea"` marker records a per-instance rule without selecting
+or converting custom fields yet (JAS-49). These additions are opt-in and do not
+change Confluence envelopes. Jira single-representation entries set
+`x-as-representation: {"default": "adf"}` so CLI help can name the default.
