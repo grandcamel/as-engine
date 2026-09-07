@@ -92,6 +92,11 @@ core version it was released with (grand-camel-platform ADR 0013).
   isLast termination on token paging, string-typed numeric offsets, and the
   paired emptyPage/requested offset contract; the responder decodes serialized
   JSON media examples when the declared schema is an object or array (JAS-45)
+- Added optional unrestricted project-membership policy, body identity
+  alternatives and arrays, secondary body checks, issue-key arrays and opt-in
+  literal AND clauses to the scope guard; retained existing scope defaults and
+  local refusal contracts. Added strict uniqueItems validation for project-
+  filter arrays (JAS-46). (JAS-46)
 
 ## [0.1.0a0] - 2026-09-06
 
