@@ -131,11 +131,11 @@ class Surface:
         transport_factory: Callable[[str, OperationIndex], Transport],
         *,
         registry: Registry | None = None,
-        scope_allowlist: Sequence[str] = (),
+        scope_allowlist: Sequence[str] | None = (),
         scope_allow_site: bool = False,
         scope_resolution_rules: Mapping[str, tuple[tuple[str, ...], ...]] | None = None,
     ):
-        self.scope_allowlist = tuple(scope_allowlist)
+        self.scope_allowlist = None if scope_allowlist is None else tuple(scope_allowlist)
         self.scope_allow_site = scope_allow_site
         self.scope_resolution_rules = deepcopy(dict(scope_resolution_rules or {}))
         self.indexes = indexes

@@ -25,7 +25,6 @@ _UNSUPPORTED_VALIDATORS = {
     "pattern",
     "patternProperties",
     "propertyNames",
-    "uniqueItems",
 }
 
 
@@ -74,6 +73,21 @@ def _bounds_errors(value: Any, schema: Mapping[str, Any], path: str) -> list[str
     return errors
 
 
+def _json_equal(left: Any, right: Any) -> bool:
+    """JSON equality distinguishes booleans from numbers and ignores object order."""
+    if isinstance(left, bool) or isinstance(right, bool):
+        return type(left) is type(right) and left == right
+    if isinstance(left, dict) and isinstance(right, dict):
+        return left.keys() == right.keys() and all(
+            _json_equal(value, right[key]) for key, value in left.items()
+        )
+    if isinstance(left, list) and isinstance(right, list):
+        return len(left) == len(right) and all(
+            _json_equal(a, b) for a, b in zip(left, right)
+        )
+    return left == right
+
+
 def _value_errors(value: Any, schema: Any, schemas: Mapping[str, Any], path: str) -> list[str]:
     try:
         resolved = _resolve(schema, schemas)
@@ -82,6 +96,8 @@ def _value_errors(value: Any, schema: Any, schemas: Mapping[str, Any], path: str
     unsupported = _UNSUPPORTED_VALIDATORS.intersection(resolved)
     if unsupported:
         return [f"{path}: unsupported schema validator: {min(unsupported)}"]
+    if "uniqueItems" in resolved and type(resolved["uniqueItems"]) is not bool:
+        return [f"{path}: uniqueItems must be boolean"]
     if isinstance(resolved.get("additionalProperties"), dict):
         return [f"{path}: unsupported schema validator: additionalProperties"]
     if value is None and resolved.get("nullable") is True:
@@ -134,6 +150,12 @@ def _value_errors(value: Any, schema: Any, schemas: Mapping[str, Any], path: str
             if name in value:
                 errors.extend(_value_errors(value[name], child, schemas, f"{path}.{name}"))
     if isinstance(value, list):
+        if resolved.get("uniqueItems") is True and any(
+            _json_equal(item, prior)
+            for index, item in enumerate(value)
+            for prior in value[:index]
+        ):
+            errors.append(f"{path}: array items must be unique")
         items = resolved.get("items")
         if items is not None and not isinstance(items, dict):
             return [f"{path}: items must be an object"]

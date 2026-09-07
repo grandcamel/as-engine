@@ -28,7 +28,7 @@ def _identity(value: Any) -> str:
 def _refuse(context: Context, identity: Any, reason: str) -> ScopeRefusal:
     return ScopeRefusal(
         f"{context.operation.operationId}: scope identity {identity!r}; "
-        f"allowlist={json.dumps(list(context.scope_allowlist))}: {reason}",
+        f"allowlist={json.dumps(None if context.scope_allowlist is None else list(context.scope_allowlist))}: {reason}",
         context.operation.operationId,
     )
 
@@ -153,6 +153,8 @@ class Scope(Transform):
             }
             decision = decide(tag, **kwargs)
             if isinstance(tag, dict) and "resolve" in tag:
+                if "checks" in tag:
+                    raise ValueError("secondary checks cannot use resolvers")
                 if not context.scope_allowlist:
                     raise ValueError("empty allowlist")
                 if tag.get("in") == "body":

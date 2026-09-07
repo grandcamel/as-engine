@@ -292,3 +292,53 @@ Untagged operations and reasons (136):
 | `getForgeAppProperty` | App-property identity needs a separately reviewed site-level contract; not a space id. |
 | `putForgeAppProperty` | App-property identity needs a separately reviewed site-level contract; not a space id. |
 | `deleteForgeAppProperty` | App-property identity needs a separately reviewed site-level contract; not a space id. |
+
+## Jira identity extensions (JAS-46)
+
+The existing default remains `scope_allowlist=()` (deny scoped operations).
+Consumers may configure a Surface with `scope_allowlist=None` for unrestricted
+project membership. This does not remove tag validation, identity structure,
+body/argv agreement, or the independent site-operation gate. A per-call
+`scope_allowlist=None` still means inherit the Surface's policy; an explicit
+empty per-call sequence denies scoped calls. Refusal JSON prints this configured
+unrestricted policy as `allowlist=null`. Confluence's defaults are unchanged.
+
+Issue-key tags with `separator` also accept nonempty arrays: every element must
+have a project prefix and numeric issue suffix, and every derived project must
+be allowed. A numeric-only issue ID cannot prove a project. If supplied, the
+argv identity must agree with every named/resolved project, even when membership
+is unrestricted. A site call's optional argv identity must itself be allowed.
+
+Body tags additionally support a nonempty `paths` list of ordinary JSON Pointers
+as an alternative to `path`. Every present key/id alternative must agree; a
+present null, empty or malformed value refuses. These are alternatives in
+location, not permission to ignore a conflicting value. No wildcard extraction
+is supported. A single `path` may select a nonempty identity array; every item
+must equal the explicit argv identity. A body `separator` derives project keys
+from a scalar or array of issue keys. Body-only scope always requires a real,
+matching argv identity, including JQL bodies and unrestricted membership.
+
+A body tag may carry `clause: "project"` for JQL stored at its pointer. Both body
+and query clause tags may opt into `conjunction: true`, a conservative literal
+AND-only grammar. It requires a complete `project = KEY` or `project IN (...)`
+restriction. Other predicates may use literal comparisons, IN lists or IS
+EMPTY/NULL, joined only by AND. OR, NOT, functions, saved filters, boolean
+grouping, ORDER BY and malformed or trailing syntax refuse. Quoted literal
+values do not become boolean syntax. This is not general JQL parsing. The old
+whole-clause-only grammar remains the default for tags without this opt-in.
+
+A direct path/key/query tag may include `checks`, a list of body-only descriptors
+such as `{"in":"body","paths":["/fields/project/key","/fields/project/id"],
+"optional":true}`. The primary identity is proved first; each present secondary
+identity must agree with that project. Missing secondary paths are skipped only
+when optional; present invalid values refuse. The proved primary identity is
+already visible in argv, so a keyed issue update need not repeat `--project`.
+Recursive checks, resolvers, non-body descriptors and malformed metadata refuse
+before transport. Jira uses this on editIssue and doTransition so a hidden
+project change in a file body cannot disagree with the issue key.
+
+Project-filter parameters also use the bounded validator's `uniqueItems`
+keyword: metadata must be boolean; true rejects duplicate JSON-equal array
+values (1 and 1.0 compare equal, while true and 1 differ). False imposes no
+uniqueness requirement. Values are never silently deduplicated, and all other
+unsupported validation keywords retain their existing refusal behavior.

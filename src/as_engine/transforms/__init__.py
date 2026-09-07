@@ -37,7 +37,7 @@ class Context:
     origin: Callable[[], str | None]
     warn: Callable[[str], None] | None = None
     state: dict[str, Any] = field(default_factory=dict)
-    scope_allowlist: tuple[str, ...] = ()
+    scope_allowlist: tuple[str, ...] | None = ()
     scope_allow_site: bool = False
     scope_argv_identity: str | None = None
     scope_resolution_rules: Mapping[str, tuple[tuple[str, ...], ...]] = field(default_factory=dict)
