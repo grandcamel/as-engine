@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections import deque
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from math import floor
 from typing import Any
@@ -29,6 +30,22 @@ class Responder:
         self._index = index
         self._status = status
         self._body = body
+        self._seeded: dict[str, deque[Response]] = {}
+        self.requests: list[tuple[str, dict[str, Any], Any]] = []
+
+    def seed(self, operation_id: str, responses: Sequence[Response | Any]) -> None:
+        """Replace an operation's response queue with explicit responses.
+
+        Raw response bodies use this responder's default status.  A supplied
+        ``Response`` retains its status and headers.
+        """
+
+        self._seeded[operation_id] = deque(
+            deepcopy(response)
+            if isinstance(response, Response)
+            else Response(status=self._status, body=deepcopy(response))
+            for response in responses
+        )
 
     def call(
         self,
@@ -36,7 +53,12 @@ class Responder:
         parameters: Mapping[str, Any],
         body: Any,
     ) -> Response:
-        del parameters, body
+        self.requests.append((operation.operationId, deepcopy(dict(parameters)), deepcopy(body)))
+        seeded = self._seeded.get(operation.operationId)
+        if seeded is not None:
+            if not seeded:
+                raise ValueError(f"seeded responses exhausted for operation {operation.operationId}")
+            return deepcopy(seeded.popleft())
         if self._body is not UNSET:
             response_body = deepcopy(self._body)
         elif self._status >= 400:

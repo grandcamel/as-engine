@@ -5,6 +5,7 @@ from typing import Any
 from as_engine.index import Operation, OperationIndex
 from as_engine.output import render_output
 from as_engine.responder import Responder
+from as_engine.transport import Response
 
 
 def _operation(**changes: Any) -> Operation:
@@ -174,3 +175,61 @@ def test_explicit_null_media_example_wins():
     assert (
         Responder(OperationIndex({"example": operation}, {})).call(operation, {}, None).body is None
     )
+
+
+def test_responder_seed_serves_response_sequence_and_preserves_explicit_status():
+    operation = _operation()
+    responder = Responder(OperationIndex({operation.operationId: operation}, {}), status=201)
+    responder.seed(
+        operation.operationId,
+        [{"step": 1}, Response(status=409, body={"step": 2}, headers={"X-Trace": "two"})],
+    )
+
+    first = responder.call(operation, {}, None)
+    second = responder.call(operation, {}, None)
+
+    assert first == Response(status=201, body={"step": 1})
+    assert second == Response(status=409, body={"step": 2}, headers={"X-Trace": "two"})
+
+
+def test_responder_seeded_queue_exhaustion_does_not_fall_back_and_records_request():
+    operation = _operation()
+    responder = Responder(OperationIndex({operation.operationId: operation}, {}))
+    responder.seed(operation.operationId, [])
+    parameters = {"filter": {"labels": ["new"]}}
+    body = {"widget": {"name": "one"}}
+
+    try:
+        responder.call(operation, parameters, body)
+    except ValueError as exc:
+        assert str(exc) == "seeded responses exhausted for operation getWidget"
+    else:
+        raise AssertionError("an exhausted seeded queue must fail")
+
+    parameters["filter"]["labels"].append("changed")
+    body["widget"]["name"] = "changed"
+    assert responder.requests == [
+        ("getWidget", {"filter": {"labels": ["new"]}}, {"widget": {"name": "one"}})
+    ]
+
+
+def test_responder_seeded_queues_are_isolated_and_defensively_copied():
+    first_operation = _operation(operationId="first")
+    second_operation = _operation(operationId="second")
+    responder = Responder(
+        OperationIndex(
+            {first_operation.operationId: first_operation, second_operation.operationId: second_operation},
+            {},
+        )
+    )
+    queued = {"items": ["original"]}
+    responder.seed("first", [queued])
+    responder.seed("second", [{"items": ["second"]}])
+    queued["items"].append("changed before call")
+
+    first = responder.call(first_operation, {}, None)
+    first.body["items"].append("changed after call")
+    second = responder.call(second_operation, {}, None)
+
+    assert first.body == {"items": ["original", "changed after call"]}
+    assert second.body == {"items": ["second"]}

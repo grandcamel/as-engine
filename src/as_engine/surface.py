@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping, Sequence
+from copy import deepcopy
+from dataclasses import replace
 from typing import Any
 
 from assistant_skills_lib.error_handler import BaseAPIError  # type: ignore[import-untyped]
 
 from .errors import SurfaceError, messages_from
 from .index import Operation, OperationIndex, ProductIndexes
-from .params import body_errors, kebab_case, validate_parameters
+from .params import alias_flags, body_errors, kebab_case, validate_parameters
+from .transforms import Context, Registry, default_registry
+from .transforms.values import MISSING, set_target, target_value
 from .transport import Response, Transport
 
 
@@ -154,10 +158,15 @@ def describe_markdown(value: Mapping[str, Any]) -> str:
 
 class Surface:
     def __init__(
-        self, indexes: ProductIndexes, transport_factory: Callable[[str, OperationIndex], Transport]
+        self,
+        indexes: ProductIndexes,
+        transport_factory: Callable[[str, OperationIndex], Transport],
+        *,
+        registry: Registry | None = None,
     ):
         self.indexes = indexes
         self.transport_factory = transport_factory
+        self.registry = registry if registry is not None else default_registry()
 
     def resolve(self, name: str) -> tuple[str, OperationIndex, Operation]:
         try:
@@ -175,43 +184,156 @@ class Surface:
         *,
         validate_body: bool = False,
         warn: Callable[[str], None] | None = None,
+        all_pages: bool = False,
+        limit: int | None = None,
+        aliases: Mapping[str, str] | None = None,
+        version: int | None = None,
     ) -> Response:
         document, index, operation = self.resolve(name)
         note = operation.extensions.get("x-as-note")
-        try:
-            checked = validate_parameters(operation, parameters, index.schemas)
-            if validate_body:
-                problems = body_errors(operation, body, index.schemas)
-                if problems:
-                    raise SurfaceError(None, problems, code=2)
-            deprecated, replacement = deprecation(operation)
-            if deprecated and warn:
-                warn(
-                    f"Warning: {operation.operationId} is deprecated; replacement: {replacement or 'not specified'}"
-                )
-            transport = self.transport_factory(document, index)
+        transports: dict[str, Transport] = {}
+        active: set[str] = set()
+        final_body = body
+
+        def execute(
+            op: Operation,
+            values: Mapping[str, Any],
+            payload: Any,
+            *,
+            merge: bool = False,
+            cap: int | None = None,
+            keys: Mapping[str, str] | None = None,
+            supplied_version: int | None = None,
+            notify: Callable[[str], None] | None = None,
+        ) -> Response:
+            nonlocal final_body
+            if op.operationId in active:
+                raise ValueError("cyclic transform operation reference")
+            if cap is not None and (type(cap) is not int or cap < 1 or not merge):
+                raise ValueError("aggregate limit requires all_pages and a positive integer")
+            if merge and "x-as-paging" not in op.extensions:
+                raise ValueError("operation has no declared paging contract")
+            rules = alias_flags(op)
+            keys = dict(keys or {})
+            if set(keys) - rules.keys():
+                raise ValueError("unknown prerequisite alias")
+            if any(not isinstance(value, str) or not value for value in keys.values()):
+                raise ValueError("prerequisite aliases require a nonempty string")
+            # Defer only required parameters that the selected alias will supply.
+            deferred = {
+                r["target"]["name"]
+                for alias, r in rules.items()
+                if alias in keys and r["target"].get("in") != "body"
+            }
+            partial = replace(
+                op,
+                parameters=[
+                    {**p, "required": False} if p["name"] in deferred else p for p in op.parameters
+                ],
+            )
+            checked = validate_parameters(partial, values, index.schemas)
+
+            def transport() -> Transport:
+                if document not in transports:
+                    transports[document] = self.transport_factory(document, index)
+                return transports[document]
+
+            def send(params: Mapping[str, Any], request_body: Any) -> Response:
+                params = validate_parameters(op, params, index.schemas)
+                if validate_body:
+                    problems = body_errors(op, request_body, index.schemas)
+                    if problems:
+                        raise SurfaceError(None, problems, code=2)
+                result = transport().call(op, params, request_body)
+                if not 200 <= result.status < 300:
+                    raise SurfaceError(
+                        result.status, messages_from(result.body) or [f"HTTP {result.status}"]
+                    )
+                return result
+
+            def invoke(
+                child: str,
+                params: Mapping[str, Any],
+                request_body: Any = None,
+                *,
+                all_pages: bool = False,
+            ) -> Response:
+                if child not in index.operations:
+                    raise ValueError("transform operation is not in the same document")
+                return execute(index.operations[child], params, request_body, merge=all_pages)
+
+            context = Context(
+                document,
+                index,
+                op,
+                checked,
+                deepcopy(payload),
+                keys,
+                merge,
+                cap,
+                invoke,
+                send,
+                lambda: getattr(transport(), "base_url", None),
+                notify,
+            )
+            if supplied_version is not None:
+                tag = op.extensions.get("x-as-version")
+                if tag is None or type(supplied_version) is not int or supplied_version < 1:
+                    raise ValueError(
+                        "--version requires a version-tagged operation and positive integer"
+                    )
+                if target_value(context, tag["target"]) is not MISSING:
+                    raise ValueError("conflicting --version and body version")
+                set_target(context, tag["target"], supplied_version)
+            active.add(op.operationId)
             try:
-                response = transport.call(operation, checked, body)
+                selected = self.registry.selected(op)
+                for tag_name, transform in selected:
+                    transform.request(context, op.extensions[tag_name])
+                context.parameters = validate_parameters(op, context.parameters, index.schemas)
+                if op is operation:
+                    final_body = context.body
+                deprecated, replacement = deprecation(op)
+                if deprecated and notify:
+                    notify(
+                        f"Warning: {op.operationId} is deprecated; replacement: {replacement or 'not specified'}"
+                    )
+                response = send(context.parameters, context.body)
+                for tag_name, transform in selected:
+                    response = transform.response(context, op.extensions[tag_name], response)
+                if notify and "count" in context.state:
+                    notify(f"count={context.state['count']}")
+                return response
             finally:
-                close = getattr(transport, "close", None)
-                if close:
-                    close()
-            if not 200 <= response.status < 300:
-                raise SurfaceError(
-                    response.status, messages_from(response.body) or [f"HTTP {response.status}"]
-                )
-            return response
+                active.remove(op.operationId)
+
+        try:
+            return execute(
+                operation,
+                parameters,
+                body,
+                merge=all_pages,
+                cap=limit,
+                keys=aliases,
+                supplied_version=version,
+                notify=warn,
+            )
         except BaseAPIError as exc:
             error = SurfaceError.from_domain(exc)
         except SurfaceError as exc:
             error = exc
         except ValueError as exc:
             error = SurfaceError(None, [str(exc)], code=2)
+        finally:
+            for transport in transports.values():
+                close = getattr(transport, "close", None)
+                if close:
+                    close()
         error.operation = operation.operationId
         error.note = note
         if error.status == 400:
             error.messages = list(
-                dict.fromkeys(error.messages + body_errors(operation, body, index.schemas))
+                dict.fromkeys(error.messages + body_errors(operation, final_body, index.schemas))
             )
         raise error
 
@@ -260,32 +382,52 @@ def parse_call_flags(
     operation: Operation, arguments: Sequence[str]
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Derive flags from the record; leave type validation to the engine checker."""
-    reserved = {"body", "field", "format", "validate-body", "help"}
+    rules = alias_flags(operation)
+    all_pages = "--all" in arguments
+    reserved = {"body", "field", "format", "validate-body", "help", "all"} | rules.keys()
+    if all_pages:
+        reserved.add("limit")
+    if "x-as-version" in operation.extensions:
+        reserved.add("version")
     flags = {
         "--"
         + ("parameter-" if kebab_case(p["name"]) in reserved else "")
         + kebab_case(p["name"]): p
         for p in operation.parameters
     }
-    if len(flags) != len(operation.parameters):
+    if not all_pages:
+        for p in operation.parameters:
+            if p["name"] == "limit":
+                flags["--parameter-limit"] = p
+    if len({id(p) for p in flags.values()}) != len(operation.parameters):
         raise ValueError("operation has ambiguous parameter flags")
     parameters: dict[str, Any] = {}
     options: dict[str, Any] = {
         "body": None,
+        "all_pages": all_pages,
+        "limit": None,
+        "aliases": {},
+        "version": None,
         "field": [],
         "format": "json",
         "validate_body": False,
         "help": False,
     }
+    special = {"--body", "--field", "--format"} | {"--" + alias for alias in rules}
+    if all_pages:
+        special.add("--limit")
+    if "x-as-version" in operation.extensions:
+        special.add("--version")
+    seen_options: set[str] = set()
     i = 0
     while i < len(arguments):
         token = arguments[i]
         key, equal, value = token.partition("=")
         i += 1
-        if key in ("--validate-body", "--help") and not equal:
-            options[key[2:].replace("-", "_")] = True
+        if key in ("--validate-body", "--help", "--all") and not equal:
+            options["all_pages" if key == "--all" else key[2:].replace("-", "_")] = True
             continue
-        if key not in flags and key not in ("--body", "--field", "--format"):
+        if key not in flags and key not in special:
             raise ValueError(f"Unknown flag: {key}")
         if not equal:
             if i == len(arguments) or arguments[i].startswith("--"):
@@ -309,6 +451,17 @@ def parse_call_flags(
                 raise ValueError(f"Duplicate flag: {key}")
             else:
                 parameters[name] = value
+        elif key == "--limit" or key == "--version":
+            if key in seen_options:
+                raise ValueError(f"Duplicate flag: {key}")
+            seen_options.add(key)
+            if not value.isdecimal() or int(value) < 1:
+                raise ValueError(f"{key} must be a positive integer")
+            options[key[2:]] = int(value)
+        elif key[2:] in rules:
+            if key[2:] in options["aliases"]:
+                raise ValueError(f"Duplicate flag: {key}")
+            options["aliases"][key[2:]] = value
         elif key == "--field":
             options["field"].append(value)
         else:

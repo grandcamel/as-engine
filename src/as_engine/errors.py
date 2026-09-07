@@ -87,6 +87,8 @@ def exit_code(status: int | None) -> int:
         return 4
     if status == 404:
         return 5
+    if status == 409:
+        return 7
     if status == 429 or status is not None and status >= 500:
         return 6
     return 1

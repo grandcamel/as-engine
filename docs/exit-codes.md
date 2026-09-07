@@ -10,12 +10,13 @@ exit codes are unchanged.
 | Exit | Meaning |
 | --- | --- |
 | 0 | Success |
-| 1 | Other failure, including HTTP 409 or a refused redirect |
+| 1 | Other failure, including a refused redirect |
 | 2 | Usage, parameter/body validation, or HTTP 400 |
 | 3 | Authentication failure (401) |
 | 4 | Scope/permission refusal (403; Confluence adds no project guard) |
 | 5 | Operation/resource not found (404) |
 | 6 | Server/transport failure or exhausted 429/5xx retries |
+| 7 | Conflict (409); never retried or automatically refreshed |
 
 A local usage failure has status null. A 400 retains the server's messages and
 adds any body-validation diagnostics. A 409 is surfaced immediately. A network

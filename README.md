@@ -90,8 +90,16 @@ applies timeouts, and retries explicit 429 and all 5xx responses with exponentia
 backoff and numeric/date Retry-After. It never retries a 409, connection exception
 or follows a redirect. Retries on mutation responses follow the existing product
 policy. Bodies are JSON; operations requiring non-JSON media types fail explicitly.
-No pagination or prerequisite/rich-text transforms run in this surface. The
-operation's `limit` remains an ordinary spec parameter.
+`Surface.call(..., all_pages=True, limit=120)` follows `x-as-paging`, returns
+its merged items array, and reports `count=120` through the warning callback;
+one page is the default and the operation's `parameters["limit"]` remains page
+size. Prerequisite aliases resolve exact keys through the declared lookup;
+version tags inject current+1 or the draft override unless a version is supplied.
+Conflicting aliases/ids fail before lookup; 409 exits with conflict code 7 and
+never refreshes or retries. `Responder.seed(operation_id, responses)` queues
+copied bodies or `Response` objects and `requests` records calls; exhausted
+seeded queues fail. See [transform hooks](docs/transforms.md) for the ordered,
+per-Surface registry and extension contract.
 
 `Responder(index, status=200, body=...)` implements the identical call interface.
 An explicit body wins, including null; otherwise forced error statuses produce a

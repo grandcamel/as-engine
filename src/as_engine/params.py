@@ -302,3 +302,27 @@ def body_errors(operation: Operation, body: Any, schemas: Mapping[str, Any]) -> 
             + request_body["ref"].replace("~", "~0").replace("/", "~1")
         }
     return _value_errors(body, schema, schemas, "body") if schema is not None else []
+
+
+def alias_flags(operation: Operation) -> dict[str, dict[str, Any]]:
+    """Return key-form aliases exactly as declared by prerequisite tags."""
+    rules = operation.extensions.get("x-as-prerequisites", [])
+    if not isinstance(rules, list):
+        raise ValueError("x-as-prerequisites must be an array")
+    result: dict[str, dict[str, Any]] = {}
+    for rule in rules:
+        if not isinstance(rule, dict) or not isinstance(rule.get("alias"), str):
+            raise ValueError("prerequisite must declare an alias")
+        alias = rule["alias"]
+        if alias in {"body", "field", "format", "validate-body", "help", "all", "limit", "version"}:
+            raise ValueError("prerequisite alias collides with a call option")
+        target = rule.get("target")
+        if not isinstance(target, dict) or target.get("in") not in {"body", "path", "query"}:
+            raise ValueError("prerequisite target must name a body, path or query input")
+        field = "path" if target["in"] == "body" else "name"
+        if not isinstance(target.get(field), str) or not target[field]:
+            raise ValueError("prerequisite target is missing its path or name")
+        if not re.fullmatch(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*", alias) or alias in result:
+            raise ValueError("invalid or duplicate prerequisite alias")
+        result[alias] = rule
+    return result
