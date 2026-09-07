@@ -47,6 +47,11 @@ core version it was released with (grand-camel-platform ADR 0013).
   aggregate limits and counts, exact prerequisite key resolution, current-
   version injection with draft override, and additive seeded responder queues.
   HTTP 409 has conflict exit code 7 and is never retried (JAS-37)
+- Shared Markdown/ADF/Confluence-storage converters, labeled lossless
+  placeholders, date/duration parsers, the pinned first-party ADF schema
+  (57.3.4) with opt-in validation, and rich-text/representation transform
+  contracts. Empty ADF text nodes and the bare-heading parser loop are fixed;
+  product CLI/transform wiring follows in phase B (JAS-38 phase A)
 
 ## [0.1.0a0] - 2026-09-06
 
