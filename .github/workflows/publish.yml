@@ -6,6 +6,7 @@ name: Publish to PyPI
 # compatible range and carry the core version they were released with.
 
 on:
+  workflow_dispatch:
   release:
     types: [published]
 
@@ -18,6 +19,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Check the tag against the package version
+        if: github.event_name == 'release'
         run: |
           python - "${GITHUB_REF_NAME}" <<'PY'
           import re, sys, tomllib
@@ -73,13 +75,19 @@ jobs:
         run: |
           cd consumer
           pip install ../dist/*.whl
-          pip install -e ".[dev]" || pip install -e .
+          if [ "${{ matrix.repo }}" = "confluence-as" ]; then
+            pip install hatchling
+            pip install --no-build-isolation -e ".[dev]"
+          else
+            pip install -e ".[dev]" || pip install -e .
+          fi
       - name: Run the product suite
         run: |
           cd consumer
           pytest -q -p no:cacheprovider
 
   publish-testpypi:
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     needs: [test-wheel, validate-downstream]
     environment: testpypi
@@ -96,6 +104,7 @@ jobs:
           skip-existing: true
 
   publish-pypi:
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     needs: publish-testpypi
     environment: pypi
