@@ -38,6 +38,11 @@ core version it was released with (grand-camel-platform ADR 0013).
   `output` (json, table, markdown); the compiler additionally records inline
   200 schemas, response examples, the `deprecated` flag, request-body
   required/media types and parameter style/explode when present (JAS-36)
+- `cassette`: Recorder and Player transports at the transport seam (JSON
+  format_version 1 keyed by operationId, canonical parameters and the
+  scrubbed body hash; exact match or a clear miss, never a network fallback;
+  recursive scrubbing of credentials, registered secrets and site
+  identifiers before anything is persisted); `docs/cassettes.md` (JAS-42)
 
 ## [0.1.0a0] - 2026-09-06
 
