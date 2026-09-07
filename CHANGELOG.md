@@ -87,6 +87,11 @@ core version it was released with (grand-camel-platform ADR 0013).
   (byte-equal to the shared library's tabulate output and its fallback)
   instead of importing the shared package; the import-isolation test now
   covers surface, output and help. (JAS-63)
+- Exact OpenAPI parameter names accepted as call flags alongside the kebab
+  form; paging transform gains declared body targets for POST paging, optional
+  isLast termination on token paging, string-typed numeric offsets, and the
+  paired emptyPage/requested offset contract; the responder decodes serialized
+  JSON media examples when the declared schema is an object or array (JAS-45)
 
 ## [0.1.0a0] - 2026-09-06
 
