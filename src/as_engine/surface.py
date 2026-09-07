@@ -426,6 +426,16 @@ def parse_call_flags(
         + kebab_case(p["name"]): p
         for p in operation.parameters
     }
+    # Accept the published parameter spelling as well as its kebab alias.
+    # Reserve the same CLI names in both forms and reject ambiguous aliases.
+    if len(flags) != len(operation.parameters):
+        raise ValueError("operation has ambiguous parameter flags")
+    for p in operation.parameters:
+        prefix = "parameter-" if kebab_case(p["name"]) in reserved else ""
+        flag = "--" + prefix + p["name"]
+        if flag in flags and flags[flag] is not p:
+            raise ValueError("operation has ambiguous parameter flags")
+        flags[flag] = p
     if not all_pages:
         for p in operation.parameters:
             if p["name"] == "limit":

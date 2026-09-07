@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections import deque
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
@@ -72,7 +73,9 @@ class Responder:
         seeded = self._seeded.get(operation.operationId)
         if seeded is not None:
             if not seeded:
-                raise ValueError(f"seeded responses exhausted for operation {operation.operationId}")
+                raise ValueError(
+                    f"seeded responses exhausted for operation {operation.operationId}"
+                )
             response = deepcopy(seeded.popleft())
             if binary_mode(operation, output) and 200 <= response.status < 300:
                 return binary_response(response, output)
@@ -104,16 +107,44 @@ class Responder:
 
     def _response_body(self, operation: Operation) -> Any:
         example = operation.response_example
-        if example is not NO_EXAMPLE:
-            return deepcopy(example)
-
         schema = getattr(operation, "response_schema", None)
         if not isinstance(schema, dict):
             response_name = operation.response_200
             schema = self._index.schemas.get(response_name) if response_name else None
+        if example is not NO_EXAMPLE:
+            # Some OpenAPI publishers serialize JSON containers inside media
+            # examples. Decode only when the response schema declares that type.
+            container = self._container_type(schema, set())
+            if isinstance(example, str) and container is not None:
+                try:
+                    decoded = json.loads(example)
+                except ValueError:
+                    pass
+                else:
+                    if isinstance(decoded, container):
+                        return decoded
+            return deepcopy(example)
         if not isinstance(schema, dict):
             return None
         return self._generate(schema, active_refs=set(), depth=0)
+
+    def _container_type(self, schema: Any, seen: set[str]) -> type | None:
+        if not isinstance(schema, dict):
+            return None
+        ref = schema.get("$ref")
+        if isinstance(ref, str):
+            name = self._reference_name(ref)
+            if name is None or name in seen:
+                return None
+            return self._container_type(self._index.schemas.get(name), seen | {name})
+        if schema.get("type") == "object" or "properties" in schema:
+            return dict
+        if schema.get("type") == "array":
+            return list
+        for part in schema.get("allOf", []):
+            if result := self._container_type(part, seen):
+                return result
+        return None
 
     def _generate(self, schema: dict[str, Any], *, active_refs: set[str], depth: int) -> Any:
         if "example" in schema:

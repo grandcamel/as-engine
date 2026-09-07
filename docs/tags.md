@@ -251,3 +251,26 @@ Multipart needs **no enrichment tag**: `request_media_types` selects
 `@path` values become file parts, other values form fields, and the transport adds
 `X-Atlassian-Token: nocheck`. Upload/update operations that return JSON must not
 receive the binary response tag. New overlay actions retain full Entry provenance.
+
+## Jira request targets and optional token termination (JAS-45)
+
+Paging request roles additionally accept `{"in":"body","path":"/nextPageToken"}`
+(and `/maxResults` for page size) when that field exists in the operation's
+request schema. Continuation updates only that field on a copied body, retaining
+filters and explicit page size. Token styles may declare `response.isLastPath`:
+when present in a reply it must be boolean; true stops even if a token remains,
+false requires a continuation, and an omitted optional last flag falls back to
+the declared token. Offset inputs declared as strings keep that wire type while
+nonnegative decimal values advance arithmetically by the actual returned count.
+Jira audit records use existing `offset/limit` with `/records` and `/total`;
+failed webhooks use existing `cursor`, token parameter `after`, and link `/next`.
+
+For an explicitly reviewed bare-array endpoint, `style: "offset/limit"` can
+pair `termination: "emptyPage"` with `advance: "requested"`. Both are required
+together: a nonempty page advances by the sent page size, including short pages;
+an empty page stops. An absent size is taken from its declared schema default
+and sent explicitly, or refused if no default exists. The size must be positive.
+The default total/isLast contract and count-based advance remain unchanged.
+This tag is valid only when the endpoint's empty-page and page-size semantics
+support the intended traversal; it cannot prove exhaustion after server-side
+filtering or compensate for an undocumented server page-size clamp.

@@ -162,3 +162,10 @@ vendor query parameters. `build_body(..., operation=operation)` preserves tagged
 Markdown fields and reads UTF-8 `@file` values. Date/duration tags use the scalar
 parser registry. See [rich text](docs/richtext.md) for encoding, lookup isolation,
 CLI integration and the optional final-body validation contract.
+
+Jira consumers can use exact OpenAPI parameter flags alongside kebab aliases.
+Paging also handles POST body continuation fields, optional token last-page
+signals, and decimal offsets whose published parameter schema is a string;
+the responder also decodes serialized JSON examples when the response schema
+declares a matching object or array. These additions preserve the existing
+Confluence call and paging contracts.

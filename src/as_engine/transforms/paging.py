@@ -4,12 +4,15 @@
 # ruff: noqa: TRY004
 from __future__ import annotations
 
+from copy import deepcopy
+from dataclasses import replace
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
+from ..params import _resolve
 from ..transport import Response
 from . import Context, Transform
-from .values import MISSING, parameter, pointer, required
+from .values import MISSING, parameter, parts, pointer, required, set_target, target_value
 
 STYLES = {"cursor", "nextPageToken", "offset/limit", "start/limit", "none", "ancestor"}
 
@@ -51,6 +54,48 @@ def link_token(link: Any, name: str, origin: str | None) -> str:
     return values[0]
 
 
+def target_schema(context: Context, target: Any) -> dict[str, Any]:
+    """Validate a declared parameter or an existing request-body schema field."""
+    if not isinstance(target, dict):
+        raise ValueError("paging target must be an object")
+    if target.get("in") != "body":
+        declared = parameter(context, target)
+        return _resolve(declared.get("schema", declared), context.index.schemas)
+    path = target.get("path")
+    if not isinstance(path, str):
+        raise ValueError("paging body target must name a field")
+    keys = parts(path)
+    if not keys:
+        raise ValueError("paging body target must name a field")
+    request = context.operation.requestBody or {}
+    schema = request.get("schema", {})
+    if "ref" in request:
+        schema = context.index.schemas.get(request["ref"], {})
+    for key in keys:
+        resolved = _resolve(schema, context.index.schemas)
+        properties = dict(resolved.get("properties", {}))
+        for child in resolved.get("allOf", []):
+            properties.update(_resolve(child, context.index.schemas).get("properties", {}))
+        if key not in properties:
+            raise ValueError("paging body target is not declared")
+        schema = properties[key]
+    return _resolve(schema, context.index.schemas)
+
+
+def offset_value(context: Context, target: Any) -> int:
+    value = target_value(context, target)
+    schema = target_schema(context, target)
+    if schema.get("type") == "string" and isinstance(value, str) and value.isdecimal():
+        value = int(value)
+    return integer(value, "offset")
+
+
+def assign(context: Context, target: Any, value: Any, *, offset: bool = False) -> None:
+    if offset and target_schema(context, target).get("type") == "string":
+        value = str(value)
+    set_target(context, target, value)
+
+
 class Paging(Transform):
     def request(self, context: Context, tag: Any) -> None:
         if not isinstance(tag, dict) or tag.get("style") not in STYLES:
@@ -59,7 +104,7 @@ class Paging(Transform):
             return
         style = tag["style"]
         for target in tag.get("request", {}).values():
-            parameter(context, target)
+            target_schema(context, target)
         roles = tag.get("request", {})
         needed = (
             []
@@ -70,6 +115,24 @@ class Paging(Transform):
         )
         if any(role not in roles for role in needed):
             raise ValueError("missing required paging request metadata")
+        if "termination" in tag or "advance" in tag:
+            if (
+                style != "offset/limit"
+                or tag.get("termination") != "emptyPage"
+                or tag.get("advance") != "requested"
+            ):
+                raise ValueError(
+                    "emptyPage termination requires offset/limit and requested advance"
+                )
+            limit_target = roles["limit"]
+            if target_value(context, limit_target) is MISSING:
+                default = target_schema(context, limit_target).get("default", MISSING)
+                if default is MISSING:
+                    raise ValueError(
+                        "requested advance requires an explicit page size or schema default"
+                    )
+                assign(context, limit_target, default)
+            integer(target_value(context, limit_target), "requested page size", 1)
         if tag.get("merge", "append") not in {"append", "prepend"}:
             raise ValueError("unknown paging merge order")
         if "itemsPaths" in tag:
@@ -78,7 +141,9 @@ class Paging(Transform):
         elif "itemsPath" not in tag:
             raise ValueError("missing paging itemsPath")
         if style in {"offset/limit", "start/limit"}:
-            context.parameters.setdefault(roles["offset"]["name"], 0)
+            if target_value(context, roles["offset"]) is MISSING:
+                assign(context, roles["offset"], 0, offset=True)
+            offset_value(context, roles["offset"])
 
     def response(self, context: Context, tag: Any, response: Response) -> Response:
         if not context.all_pages:
@@ -90,10 +155,11 @@ class Paging(Transform):
             context.state["count"] = sum(len(a) for a in arrays)
             return response
         merged: list[Any] = []
-        parameters = dict(context.parameters)
+        page = replace(context, parameters=dict(context.parameters), body=deepcopy(context.body))
         role = "offset" if tag["style"] in {"offset/limit", "start/limit"} else "token"
-        name = tag.get("request", {}).get(role, {}).get("name")
-        seen = {str(parameters[name])} if name in parameters else set()
+        target = tag.get("request", {}).get(role)
+        initial = target_value(page, target) if target is not None else MISSING
+        seen = {str(initial)} if initial is not MISSING else set()
         first = response
         while True:
             items = required(response.body, tag["itemsPath"])
@@ -105,15 +171,15 @@ class Paging(Transform):
                 break
             if tag["style"] == "none":
                 break
-            value = self._next(context, tag, response.body, items, parameters)
+            value = self._next(page, tag, response.body, items, page.parameters)
             if value is MISSING:
                 break
             marker = str(value)
             if marker in seen:
                 raise ValueError("repeated paging continuation")
             seen.add(marker)
-            parameters[name] = value
-            response = context.send(parameters, context.body)
+            assign(page, target, value, offset=role == "offset")
+            response = context.send(page.parameters, page.body)
         context.state["count"] = len(merged)
         return Response(first.status, merged, first.headers)
 
@@ -127,10 +193,20 @@ class Paging(Transform):
             descriptor = tag.get("next", {})
             if "path" not in descriptor or descriptor.get("kind") not in {"link", "token"}:
                 raise ValueError("missing required paging next metadata")
+            last = MISSING
+            last_path = tag.get("response", {}).get("isLastPath")
+            if last_path is not None:
+                last = pointer(body, last_path)
+                if last is not MISSING and not isinstance(last, bool):
+                    raise ValueError("paging isLast must be a boolean")
+                if last is True:
+                    return MISSING
             value = pointer(body, descriptor["path"])
             if style == "ancestor" and value is MISSING:
                 raise ValueError("missing required ancestor id")
             if value is MISSING or value is None or value == "":
+                if last is False:
+                    raise ValueError("non-final paging response is missing its continuation")
                 return MISSING
             if descriptor["kind"] == "link":
                 value = link_token(value, tag["request"]["token"]["name"], context.origin())
@@ -140,8 +216,11 @@ class Paging(Transform):
         if not items:
             return MISSING
         metadata = tag.get("response", {})
-        offset_name = tag["request"]["offset"]["name"]
-        offset = integer(parameters[offset_name], "offset")
+        offset = offset_value(context, tag["request"]["offset"])
+        if tag.get("termination") == "emptyPage":
+            return offset + integer(
+                target_value(context, tag["request"]["limit"]), "requested page size", 1
+            )
         if style == "start/limit":
             if not all(k in metadata for k in ("offsetPath", "sizePath", "limitPath")):
                 raise ValueError("missing required paging response metadata")

@@ -117,3 +117,21 @@ type and bounds without replacing the original value until the formats hook runs
 Tagged CLI body fields use `build_body(..., operation=operation)` to retain Markdown
 or load UTF-8 `@file` input. See [rich-text contracts](richtext.md) for descriptors,
 representations, placeholders and final body validation.
+
+## Jira input compatibility (JAS-45)
+
+Paging supports declared JSON-body targets for POST continuation as well as
+query/path inputs. Caller bodies remain unchanged, page filters survive, and
+undeclared body targets fail before a send. Optional token `isLastPath` and
+string-typed decimal offsets follow the [tag contract](tags.md). Existing
+query/path paging and same-origin link constraints retain their behavior.
+`parse_call_flags` accepts exact published parameter names (`--issueIdOrKey`)
+alongside kebab aliases (`--issue-id-or-key`); both address the same validated
+input, share duplicate checks, and retain reserved-option prefixes.
+
+The explicit offset pair `termination: "emptyPage"`, `advance: "requested"`
+continues short nonempty pages using the sent request size and stops on an empty
+page. It normally needs a final empty-page probe; an aggregate limit stops
+before that probe. Missing sizes use declared schema defaults and are explicitly
+sent; absent defaults and nonpositive sizes refuse before transport. This opt-in
+contract does not infer exhaustion for APIs that can hide an entire middle range.
