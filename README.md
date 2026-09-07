@@ -41,6 +41,13 @@ At runtime, `load_index(path)` returns an `OperationIndex` whose `operations`
 map holds `Operation` records. `ProductIndexes(directory)` loads catalog entries
 marked `primary` at construction; `get(document_id)` loads lower tiers on demand.
 
+Discovery imports stay lightweight: importing the surface, output and help modules
+does not load `requests`, `assistant_skills_lib` or `jsonschema`. Transform
+implementations load when the registry is first used, and the HTTP stack loads
+when an HTTP transport is constructed. Table output keeps the shared formatter's
+simple-table and fallback behavior locally so discovery can render tables without
+loading the shared package's HTTP dependencies.
+
 ## Development
 
 ```bash

@@ -82,7 +82,12 @@ def test_surface_and_cassette_import_without_http_stack_until_constructed():
 import sys
 import as_engine.surface
 import as_engine.cassette
+import as_engine.output
+import as_engine.help
+assert as_engine.output.render_output([{'name': 'page'}], 'table')
 assert 'requests' not in sys.modules
+assert 'assistant_skills_lib' not in sys.modules
+assert 'jsonschema' not in sys.modules
 from as_engine.transport import HTTPTransport
 from as_engine import transport
 assert HTTPTransport('https://offline.invalid').error_handler is transport.handle_api_error

@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from assistant_skills_lib.formatters import format_table  # type: ignore[import-untyped]
-
 
 def render_output(data: Any, format: str = "json", columns: list[str] | None = None) -> str:
     """Render JSON data in JSON, table, or Markdown form."""
@@ -19,7 +17,7 @@ def render_output(data: Any, format: str = "json", columns: list[str] | None = N
     if not rows:
         return ""
     if format == "table":
-        return format_table(_table_rows(rows), columns=columns or _columns(rows))
+        return _format_table(_table_rows(rows), columns=columns or _columns(rows))
     if format == "markdown":
         selected = columns or _columns(rows)
         header = "| " + " | ".join(_escape(column) for column in selected) + " |"
@@ -30,6 +28,44 @@ def render_output(data: Any, format: str = "json", columns: list[str] | None = N
         ]
         return "\n".join([header, divider, *body])
     raise AssertionError("validated output format was not rendered")
+
+
+def _format_table(data: list[dict[str, str]], columns: list[str]) -> str:
+    """Vendored assistant-skills-lib 1.0.1 table behavior for normalized cells.
+
+    Only the default simple format and string cells are used by this surface.
+    Importing the shared package would also import its unrelated HTTP stack.
+    """
+    try:
+        from tabulate import tabulate  # type: ignore[import-untyped]
+    except ImportError:
+        return _format_basic_table(data, columns)
+    rows = [[row.get(column, "") for column in columns] for row in data]
+    return str(tabulate(rows, headers=columns, tablefmt="simple"))
+
+
+def _format_basic_table(data: list[dict[str, str]], columns: list[str]) -> str:
+    """Preserve the shared formatter's 50-column-width truncating fallback."""
+    widths = [len(str(column)) for column in columns]
+    for row in data:
+        for i, key in enumerate(columns):
+            value = row.get(key, "")
+            if len(value) > 50:
+                value = value[:47] + "..."
+            widths[i] = max(widths[i], len(value))
+    widths = [min(width, 50) for width in widths]
+    lines = [
+        " | ".join(str(column).ljust(widths[i]) for i, column in enumerate(columns)),
+        "-+-".join("-" * width for width in widths),
+    ]
+    for row in data:
+        lines.append(
+            " | ".join(
+                row.get(key, "")[:widths[i]].ljust(widths[i])
+                for i, key in enumerate(columns)
+            )
+        )
+    return "\n".join(lines)
 
 
 def _rows(data: Any) -> list[dict[str, Any]]:

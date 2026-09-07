@@ -13,7 +13,6 @@ from .errors import SurfaceError, messages_from
 from .index import Operation, OperationIndex, ProductIndexes
 from .params import alias_flags, body_errors, kebab_case, validate_parameters
 from .transforms import Context, Registry, default_registry
-from .transforms.richtext import validate_options
 from .transforms.values import MISSING, set_target, target_value
 from .transport import Response, Transport, binary_mode
 
@@ -141,7 +140,18 @@ class Surface:
         self.scope_resolution_rules = deepcopy(dict(scope_resolution_rules or {}))
         self.indexes = indexes
         self.transport_factory = transport_factory
-        self.registry = registry if registry is not None else default_registry()
+        self._registry = registry
+
+    @property
+    def registry(self) -> Registry:
+        """Load transform implementations only when a call or consumer needs them."""
+        if self._registry is None:
+            self._registry = default_registry()
+        return self._registry
+
+    @registry.setter
+    def registry(self, value: Registry) -> None:
+        self._registry = value
 
     def resolve(self, name: str) -> tuple[str, OperationIndex, Operation]:
         try:
@@ -171,6 +181,8 @@ class Surface:
         output: str | Path | None = None,
     ) -> Response:
         from assistant_skills_lib.error_handler import BaseAPIError  # type: ignore[import-untyped]
+
+        from .transforms.richtext import validate_options
 
         document, index, operation = self.resolve(name)
         note = operation.extensions.get("x-as-note")
