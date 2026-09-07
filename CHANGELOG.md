@@ -97,6 +97,9 @@ core version it was released with (grand-camel-platform ADR 0013).
   literal AND clauses to the scope guard; retained existing scope defaults and
   local refusal contracts. Added strict uniqueItems validation for project-
   filter arrays (JAS-46). (JAS-46)
+- Added rich-text bulk request itemsPath conversion, opt-in nullable direct-
+  ADF paths and build-time validation of the textarea custom-field marker
+  (JAS-47). (JAS-47)
 
 ## [0.1.0a0] - 2026-09-06
 
