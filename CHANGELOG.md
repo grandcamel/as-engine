@@ -27,6 +27,17 @@ core version it was released with (grand-camel-platform ADR 0013).
   applies, examples parse and validate through a caller-supplied callback);
   `docs/tags.md` freezes the `x-as-paging`, `x-as-prerequisites` and
   `x-as-version` contract (JAS-35)
+- The Generic Surface: `surface` (call, search, describe, topics over
+  `ProductIndexes`; kebab-case addressing; deprecated operations filtered
+  and warned), `params` (required/type/enum/bounds checks before any
+  request; bodies from files, stdin or dotted fields; optional body
+  diagnostics), `transport` (typed Transport protocol and Response; pooled
+  HTTP with timeouts and 429/5xx retry honouring Retry-After; no 409 retry),
+  `responder` (stateless double from examples, inline or named schemas),
+  `errors` (JSON error object; exit codes in `docs/exit-codes.md`),
+  `output` (json, table, markdown); the compiler additionally records inline
+  200 schemas, response examples, the `deprecated` flag, request-body
+  required/media types and parameter style/explode when present (JAS-36)
 
 ## [0.1.0a0] - 2026-09-06
 
