@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "as-engine"
+version = "0.1.0a0"
+description = "Spec-driven engine for the *-as command-line tools: enriched OpenAPI documents compiled to an operation index, a generic call surface, tag-driven transforms, a guard, and self-describing help."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [{ name = "grandcamel" }]
+dependencies = [
+    "requests>=2.28.0",
+    "assistant-skills-lib>=1.0.0",
+]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.6", "mypy>=1.10", "types-requests"]
+
+[project.urls]
+Repository = "https://github.com/grandcamel/as-engine"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/as_engine"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,109 @@
+name: Publish to PyPI
+
+# A published GitHub release builds the wheel, proves it imports, runs the
+# downstream product suites against it, and only then publishes. as-engine is
+# never promoted on its own (grand-camel-platform ADR 0013); products pin a
+# compatible range and carry the core version they were released with.
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Check the tag against the package version
+        run: |
+          python - "${GITHUB_REF_NAME}" <<'PY'
+          import re, sys, tomllib
+          tag = sys.argv[1]
+          version = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
+          init = open("src/as_engine/__init__.py").read()
+          assert re.search(r'__version__ = "%s"' % re.escape(version), init), "__version__ mismatch"
+          assert tag == f"v{version}", f"tag {tag} != v{version}"
+          PY
+      - name: Build
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  test-wheel:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Install from wheel and import
+        run: |
+          pip install dist/*.whl
+          python -c "import as_engine; print(as_engine.__version__)"
+
+  validate-downstream:
+    runs-on: ubuntu-latest
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        repo: [confluence-as, jira-as]
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Clone downstream product
+        run: git clone --depth 1 https://github.com/grandcamel/${{ matrix.repo }}.git consumer
+      - name: Install the built wheel, then the product
+        run: |
+          cd consumer
+          pip install ../dist/*.whl
+          pip install -e ".[dev]" || pip install -e .
+      - name: Run the product suite
+        run: |
+          cd consumer
+          pytest -q -p no:cacheprovider
+
+  publish-testpypi:
+    runs-on: ubuntu-latest
+    needs: [test-wheel, validate-downstream]
+    environment: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+
+  publish-pypi:
+    runs-on: ubuntu-latest
+    needs: publish-testpypi
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
