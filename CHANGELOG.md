@@ -43,6 +43,10 @@ core version it was released with (grand-camel-platform ADR 0013).
   scrubbed body hash; exact match or a clear miss, never a network fallback;
   recursive scrubbing of credentials, registered secrets and site
   identifiers before anything is persisted); `docs/cassettes.md` (JAS-42)
+- Ordered tag-driven transform hooks, paging across six declared styles with
+  aggregate limits and counts, exact prerequisite key resolution, current-
+  version injection with draft override, and additive seeded responder queues.
+  HTTP 409 has conflict exit code 7 and is never retried (JAS-37)
 
 ## [0.1.0a0] - 2026-09-06
 
