@@ -100,6 +100,10 @@ core version it was released with (grand-camel-platform ADR 0013).
 - Added rich-text bulk request itemsPath conversion, opt-in nullable direct-
   ADF paths and build-time validation of the textarea custom-field marker
   (JAS-47). (JAS-47)
+- Added an opt-in trailing ORDER BY clause to the scope guard's JQL grammar
+  (order_by field list on the clause form) and a key_paths body identity form
+  that checks several single-key paths independently, for the jira-as
+  Compatibility Contract (JAS-48). (JAS-48)
 
 ## [0.1.0a0] - 2026-09-06
 
