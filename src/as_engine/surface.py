@@ -122,7 +122,13 @@ class Surface:
         transport_factory: Callable[[str, OperationIndex], Transport],
         *,
         registry: Registry | None = None,
+        scope_allowlist: Sequence[str] = (),
+        scope_allow_site: bool = False,
+        scope_resolution_rules: Mapping[str, tuple[tuple[str, ...], ...]] | None = None,
     ):
+        self.scope_allowlist = tuple(scope_allowlist)
+        self.scope_allow_site = scope_allow_site
+        self.scope_resolution_rules = deepcopy(dict(scope_resolution_rules or {}))
         self.indexes = indexes
         self.transport_factory = transport_factory
         self.registry = registry if registry is not None else default_registry()
@@ -147,6 +153,9 @@ class Surface:
         limit: int | None = None,
         aliases: Mapping[str, str] | None = None,
         version: int | None = None,
+        scope_allowlist: Sequence[str] | None = None,
+        scope_allow_site: bool | None = None,
+        scope_argv_identity: str | None = None,
     ) -> Response:
         document, index, operation = self.resolve(name)
         note = operation.extensions.get("x-as-note")
@@ -234,6 +243,15 @@ class Surface:
                 send,
                 lambda: getattr(transport(), "base_url", None),
                 notify,
+                scope_allowlist=(
+                    self.scope_allowlist if scope_allowlist is None else tuple(scope_allowlist)
+                ),
+                scope_allow_site=(
+                    self.scope_allow_site if scope_allow_site is None else scope_allow_site
+                ),
+                scope_argv_identity=scope_argv_identity,
+                scope_resolution_rules=self.scope_resolution_rules,
+                scope_send=lambda target, params, payload: transport().call(target, params, payload),
             )
             if supplied_version is not None:
                 tag = op.extensions.get("x-as-version")

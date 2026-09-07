@@ -37,6 +37,17 @@ class Context:
     origin: Callable[[], str | None]
     warn: Callable[[str], None] | None = None
     state: dict[str, Any] = field(default_factory=dict)
+    scope_allowlist: tuple[str, ...] = ()
+    scope_allow_site: bool = False
+    scope_argv_identity: str | None = None
+    scope_resolution_rules: Mapping[str, tuple[tuple[str, ...], ...]] = field(default_factory=dict)
+    scope_send: Callable[[Operation, Mapping[str, Any], Any], Response] | None = None
+
+    def resolve_scope(self, operation_id: str, parameters: Mapping[str, Any]) -> Response:
+        """Issue a bounded metadata read under consumer-supplied resolution policy."""
+        from .scope import resolution_read
+
+        return resolution_read(self, operation_id, parameters)
 
 
 class Transform:
@@ -69,9 +80,11 @@ class Registry:
 def default_registry() -> Registry:
     from .paging import Paging
     from .prerequisites import Prerequisites
+    from .scope import Scope
     from .version import Version
 
     registry = Registry()
+    registry.register("x-as-scope", Scope(), order=5)
     registry.register("x-as-prerequisites", Prerequisites(), order=10)
     registry.register("x-as-version", Version(), order=20)
     registry.register("x-as-paging", Paging(), order=100)

@@ -92,3 +92,10 @@ def exit_code(status: int | None) -> int:
     if status == 429 or status is not None and status >= 500:
         return 6
     return 1
+
+
+class ScopeRefusal(SurfaceError):
+    """Local policy refusal, including an unresolved identity; never an HTTP 403."""
+
+    def __init__(self, message: str, operation: str | None = None):
+        super().__init__(None, [message], operation, code=4)

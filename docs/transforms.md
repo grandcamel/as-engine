@@ -81,3 +81,20 @@ come from `x-as-prerequisites` (`--space-key`, for example). `--version N` on
 version-tagged operations sets the body version; combining it with an existing
 body version is a usage error. `--parameter-version` addresses a colliding spec
 parameter. An explicit id alone bypasses lookup; id plus alias is a usage error.
+
+## Consumer-supplied context fields
+
+`Surface` accepts `scope_allowlist`, `scope_allow_site` and
+`scope_resolution_rules` as constructor policy defaults. `Surface.call` accepts
+optional per-call `scope_allowlist`, `scope_allow_site` and `scope_argv_identity`;
+these additive fields reach each Context, including nested guarded calls, without
+changing aliases, parameters, bodies or later-call defaults. The default scope
+hook runs at order 5. Rules are keyed by `document:operationId`, with tuples of
+allowed exact parameter-name tuples, and default to no resolution exemption.
+`context.resolve_scope(name, parameters)` is a bounded metadata-only GET resolver,
+separate from recursive `invoke`; it validates the consumer policy and parameters,
+limits reads to two per context, and marks the copied operation
+`x-as-resolution-read: true` at the ordinary transport seam. The private
+`scope_send` callback is supplied by Surface and is used only by that resolver.
+See [guard.md](guard.md) for resolution steps, default-deny decisions, per-product
+coverage, lookup counts, and the explicitly authorized privacy exception.

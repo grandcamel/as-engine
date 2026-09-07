@@ -187,6 +187,8 @@ surfaced without retrying the write or refreshing version automatically.
 
 ## Scope of enforcement
 
+See [operation scope guard](guard.md) for the `x-as-scope` tag and runtime refusal contract.
+
 The engine enforces Entry provenance and generated entry checks. Tag execution
 and exhaustive generic tag-schema enforcement belong to their consumers.
 Confluence's build-seam tests separately verify these actual tag destinations,

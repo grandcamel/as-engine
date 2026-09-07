@@ -56,7 +56,7 @@ def product(tmp_path, **changes):
         },
         "x-as-note": "a useful gotcha",
         "x-as-topic": ["pages", "auth"],
-        "x-as-scope": "document",
+        "x-as-scope": {"in": "query", "name": "spaceId"},
     }
     operation.update(changes)
     doc = {"openapi": "3.0.3", "paths": {"/things": {"post": operation}}}
@@ -83,7 +83,7 @@ def test_inline_projection_and_old_records_load(tmp_path):
     assert doc["deprecated"] is False and doc["request_body_required"] is True
     assert doc["request_media_types"] == ["application/json"]
     assert doc["parameters"][0]["style"] == "form" and doc["parameters"][0]["explode"] is False
-    surface = Surface(indexes, lambda _, index: Responder(index))
+    surface = Surface(indexes, lambda _, index: Responder(index), scope_allowlist=("1", "4", "5"))
     assert surface.call("create-thing", {"spaceId": "4"}, {"title": "yes"}).body == {"id": 42}
     # No lower file exists: primary discovery and resolution must remain lazy.
     assert surface.search(["GOTCHA"])[0]["operationId"] == "createThing"
@@ -97,7 +97,7 @@ def test_validation_precedes_factory_and_body_validation_is_opt_in(tmp_path):
         calls.append(1)
         return Responder(index)
 
-    surface = Surface(product(tmp_path), factory)
+    surface = Surface(product(tmp_path), factory, scope_allowlist=("1", "4", "5"))
     for params in ({}, {"spaceId": "bad"}, {"spaceId": True}, {"unknown": "1"}):
         with pytest.raises(SurfaceError) as caught:
             surface.call("createThing", params)
@@ -123,6 +123,7 @@ def test_400_preserves_messages_and_adds_body_detail(tmp_path):
                 ]
             },
         ),
+        scope_allowlist=("1", "4", "5"),
     )
     with pytest.raises(SurfaceError) as caught:
         surface.call("createThing", {"spaceId": "5"}, {})
@@ -141,7 +142,7 @@ def test_deprecation_describe_topics_and_lower_lookup(tmp_path):
         tmp_path, deprecated=True, **{"x-as-deprecation": {"replacement": "newThing"}}
     )
     warnings = []
-    surface = Surface(indexes, lambda _, index: Responder(index))
+    surface = Surface(indexes, lambda _, index: Responder(index), scope_allowlist=("1", "4", "5"))
     assert surface.search(["page"]) == []
     assert surface.search(["page"], include_deprecated=True)[0]["path"] == "/things"
     value = surface.describe("create-thing")
@@ -176,7 +177,7 @@ def test_media_example_projection_and_parameter_flags(tmp_path):
             }
         },
     )
-    surface = Surface(indexes, lambda _, index: Responder(index))
+    surface = Surface(indexes, lambda _, index: Responder(index), scope_allowlist=("1", "4", "5"))
     assert surface.call("createThing", {"spaceId": 1}).body == [7, 8]
     _, _, operation = indexes.find("createThing")
     parameters, options = parse_call_flags(
@@ -212,3 +213,20 @@ def test_full_description_survives_build_and_old_indexes_still_load(tmp_path):
     path.write_text(json.dumps(saved))
     old = Surface(ProductIndexes(tmp_path), lambda _, idx: Responder(idx))
     assert old.describe("createThing", full=True)["description"] == "Short."
+
+
+@pytest.mark.parametrize("tag", ["document", None, {"in": "unknown"}, {"in": []}])
+def test_malformed_scope_tag_refuses_locally_before_factory(tmp_path, tag):
+    indexes = product(tmp_path, **{"x-as-scope": tag})
+    factories = []
+
+    def factory(_document, index):
+        factories.append(index)
+        return Responder(index)
+
+    surface = Surface(indexes, factory, scope_allowlist=("4",))
+    with pytest.raises(SurfaceError) as caught:
+        surface.call("createThing", {"spaceId": "4"}, {"title": "T"})
+    assert caught.value.code == 4 and caught.value.status is None
+    assert caught.value.operation == "createThing" and "allowlist" in str(caught.value)
+    assert factories == []
