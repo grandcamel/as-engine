@@ -73,6 +73,14 @@ core version it was released with (grand-camel-platform ADR 0013).
   `transport.py`, `surface.py` and `errors.py` defer the HTTP and shared
   error-library imports to first use so `api describe` no longer loads
   `requests`. (JAS-41)
+- JAS-61: multipart form request bodies on the transport seam (`@path` values
+  become file parts, the `X-Atlassian-Token: nocheck` header is sent, bytes
+  snapshotted once for retry stability) and binary streamed downloads selected
+  by the `x-as-response` tag (atomic output, `{path, bytes, content_type}`
+  responses, one same-origin redirect; cross-origin refused naming the
+  destination host); the responder, cassette (`body_base64`, multipart
+  metadata without bytes) and simulation support both modes; additive
+  `Surface.call(output=...)`; `docs/binary.md`. (JAS-61)
 
 ## [0.1.0a0] - 2026-09-06
 
