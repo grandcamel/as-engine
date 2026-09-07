@@ -1,0 +1,53 @@
+{
+  "actions": [
+    {
+      "target": "$.paths['/ping'].get",
+      "update": {"x-first": {"nested": true, "untouched": ["once"]}},
+      "description": "Add check metadata.",
+      "x-as-reason": "Exercise recursive merge.",
+      "x-as-origin": "fixture",
+      "x-as-test": "first-merge",
+      "x-as-evidence": {"url": "https://example.test/first", "date": "2026-09-06"}
+    },
+    {
+      "target": "$.paths['/ping'].get",
+      "update": {"x-first": {"second": true}},
+      "description": "Append nested metadata.",
+      "x-as-reason": "Exercise ordered merge.",
+      "x-as-origin": "fixture",
+      "x-as-test": "second-merge",
+      "x-as-evidence": {"url": "https://example.test/second", "date": "2026-09-06"},
+      "x-as-examples": [
+        {"kind": "invocation", "value": "confluence-as api call ping --body '{}'"},
+        {"kind": "json", "value": "{\"name\": \"Ada\"}", "schema": "#/components/schemas/Thing"}
+      ]
+    },
+    {
+      "target": "$.values",
+      "update": [2],
+      "description": "Append a value.",
+      "x-as-reason": "Exercise list append.",
+      "x-as-origin": "fixture",
+      "x-as-test": "append-list",
+      "x-as-evidence": {"url": "https://example.test/list", "date": "2026-09-06"}
+    },
+    {
+      "target": "$.state",
+      "update": "after",
+      "description": "Replace scalar state.",
+      "x-as-reason": "Exercise scalar replacement.",
+      "x-as-origin": "fixture",
+      "x-as-test": "replace-scalar",
+      "x-as-evidence": {"url": "https://example.test/scalar", "date": "2026-09-06"}
+    },
+    {
+      "target": "$.items[1]",
+      "remove": true,
+      "description": "Remove obsolete value.",
+      "x-as-reason": "Exercise ordered removal.",
+      "x-as-origin": "fixture",
+      "x-as-test": "remove-item",
+      "x-as-evidence": {"url": "https://example.test/remove", "date": "2026-09-06"}
+    }
+  ]
+}

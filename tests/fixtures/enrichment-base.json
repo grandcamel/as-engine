@@ -1,0 +1,9 @@
+{
+  "openapi": "3.0.0",
+  "info": {"version": "1.0.0"},
+  "components": {"schemas": {"Thing": {"type": "object", "required": ["name"]}}},
+  "paths": {"/ping": {"get": {"operationId": "ping", "responses": {"200": {"description": "ok"}}}}},
+  "items": ["keep", "drop"],
+  "values": [1],
+  "state": "before"
+}

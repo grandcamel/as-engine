@@ -195,6 +195,13 @@ def test_compile_product_writes_hand_authored_golden_bytes(tmp_path):
                         "target": "$.paths['/ping'].get",
                         "update": {"x-added": True},
                         "description": "metadata stays in overlay",
+                        "x-as-reason": "golden build provenance fixture",
+                        "x-as-origin": "test_build_seam",
+                        "x-as-test": "compile-product-ping",
+                        "x-as-evidence": {
+                            "url": "https://example.test/evidence",
+                            "date": "2026-09-06",
+                        },
                     }
                 ]
             }

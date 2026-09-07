@@ -12,6 +12,7 @@ from tempfile import NamedTemporaryFile
 from typing import Any
 
 from .compiler import compile_document
+from .enrichment import validate_overlay
 
 
 def _inside(root: Path, candidate: str) -> Path:
@@ -56,6 +57,7 @@ def compile_product(spec_dir: str | Path, out_dir: str | Path) -> dict[str, Any]
     compiled: list[tuple[str, dict[str, Any]]] = []
     catalog_documents: list[dict[str, str]] = []
     ids: set[str] = set()
+    overlay_ids: set[str] = set()
     for entry in documents:
         if not isinstance(entry, dict):
             raise ValueError("manifest document entry must be an object")
@@ -94,7 +96,16 @@ def compile_product(spec_dir: str | Path, out_dir: str | Path) -> dict[str, Any]
         if not isinstance(overlays, list) or not all(isinstance(item, str) for item in overlays):
             raise ValueError("manifest overlays must be a list of paths")
         for overlay_name in overlays:
-            overlay_values.append(_read_json(_inside(source_root, overlay_name)))
+            overlay = _read_json(_inside(source_root, overlay_name))
+            validate_overlay(overlay, source=overlay_name)
+            for action in overlay["actions"]:
+                test_id = action["x-as-test"]
+                if test_id in overlay_ids:
+                    raise ValueError(
+                        f"{overlay_name}: target {action.get('target')}: duplicate x-as-test {test_id!r}"
+                    )
+                overlay_ids.add(test_id)
+            overlay_values.append(overlay)
         strip_extensions = entry.get("strip_extensions", ["x-atlassian-narrative"])
         if not isinstance(strip_extensions, list) or not all(
             isinstance(item, str) for item in strip_extensions
