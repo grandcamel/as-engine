@@ -60,6 +60,11 @@ core version it was released with (grand-camel-platform ADR 0013).
   metadata resolution before prerequisite or operation sends; local scope
   refusal exits 4 with status null; per-call policy context on the Surface
   (JAS-39)
+- Tag-driven rich-text (order 110) and scalar-format (order 30) transforms on
+  the Generic Surface, per-call representation selection and raw response
+  output, Markdown and @file input at tagged fields, lossless placeholder
+  round trips; the converters package gains a structural check_document helper
+  (JAS-38 phase B)
 
 ## [0.1.0a0] - 2026-09-06
 
