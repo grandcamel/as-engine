@@ -52,6 +52,9 @@ core version it was released with (grand-camel-platform ADR 0013).
   (57.3.4) with opt-in validation, and rich-text/representation transform
   contracts. Empty ADF text nodes and the bare-heading parser loop are fixed;
   product CLI/transform wiring follows in phase B (JAS-38 phase A)
+- Product-independent four-level help documents with Markdown/JSON rendering,
+  topic filtering, examples, token-cap snapshots and compatible full-
+  description retention in the index (JAS-40)
 
 ## [0.1.0a0] - 2026-09-06
 
