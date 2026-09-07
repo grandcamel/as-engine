@@ -30,6 +30,7 @@ class Operation:
     deprecated: bool = False
     request_body_required: bool = False
     request_media_types: list[str] = field(default_factory=list)
+    full_description: str | None = None
 
 
 @dataclass(frozen=True)

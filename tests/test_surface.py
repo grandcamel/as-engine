@@ -191,3 +191,24 @@ def test_media_example_projection_and_parameter_flags(tmp_path):
     ):
         with pytest.raises(ValueError):
             parse_call_flags(operation, flags)
+
+
+def test_progressive_help_flags_and_risk_metadata(tmp_path):
+    surface = Surface(product(tmp_path, **{"x-as-risk": "irreversible"}), lambda _, idx: Responder(idx))
+    operation = surface.resolve("createThing")[2]
+    _, options = parse_call_flags(operation, ["--confirm", "--full", "--examples"])
+    assert options["confirm"] and options["full"] and options["examples"]
+    assert surface.describe("createThing")["risk"] == "irreversible"
+    assert "Risk: irreversible" in describe_markdown(surface.describe("createThing"))
+
+
+def test_full_description_survives_build_and_old_indexes_still_load(tmp_path):
+    surface = Surface(product(tmp_path), lambda _, idx: Responder(idx))
+    assert surface.describe("createThing")["description"] == "Short."
+    assert surface.describe("createThing", full=True)["description"] == "Short.\n\nLong."
+    path = tmp_path / "primary.json"
+    saved = json.loads(path.read_text())
+    del saved["operations"]["createThing"]["full_description"]
+    path.write_text(json.dumps(saved))
+    old = Surface(ProductIndexes(tmp_path), lambda _, idx: Responder(idx))
+    assert old.describe("createThing", full=True)["description"] == "Short."

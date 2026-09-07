@@ -99,6 +99,7 @@ def test_compile_golden_bytes_and_schema_closure():
                 "tags": ["things"],
                 "summary": "Get thing",
                 "description": "First paragraph.",
+                "full_description": "First paragraph.\n\nSecond paragraph.",
                 "parameters": [
                     {"name": "thing", "in": "path", "required": True, "type": "integer"}
                 ],

@@ -83,14 +83,20 @@ def body_outline(operation: Operation, index: OperationIndex) -> list[dict[str, 
     return result
 
 
-def describe_operation(operation: Operation, index: OperationIndex) -> dict[str, Any]:
+def describe_operation(
+    operation: Operation, index: OperationIndex, *, full: bool = False
+) -> dict[str, Any]:
+    from .help import first_paragraph
+
     deprecated, replacement = deprecation(operation)
     return {
         "operationId": operation.operationId,
         "method": operation.method,
         "path": operation.path,
         "summary": operation.summary,
-        "description": operation.description,
+        "description": (operation.full_description or operation.description)
+        if full else first_paragraph(operation.description),
+        "risk": operation.extensions.get("x-as-risk", "safe"),
         "parameters": operation.parameters,
         "body": body_outline(operation, index),
         "body_required": operation.request_body_required,
@@ -104,56 +110,9 @@ def describe_operation(operation: Operation, index: OperationIndex) -> dict[str,
 
 
 def describe_markdown(value: Mapping[str, Any]) -> str:
-    lines = [
-        f"# {value['operationId']}",
-        "",
-        f"{value['method']} `{value['path']}`",
-        "",
-        value.get("summary") or "",
-        "",
-        value.get("description") or "",
-        "",
-        "## Parameters",
-    ]
-    for parameter in value["parameters"]:
-        required = " (required)" if parameter["required"] else ""
-        enum = f"; enum: {json.dumps(parameter['enum'])}" if "enum" in parameter else ""
-        lines.append(
-            f"- `--{kebab_case(parameter['name'])}` ({parameter['in']}, {parameter['type']}){required}{enum}"
-        )
-    if not value["parameters"]:
-        lines.append("None.")
-    lines += ["", "## Body" + (" (required)" if value["body_required"] else "")]
-    for item in value["body"]:
-        lines.append(
-            f"- `{item['name']}`: {item['type']}"
-            + (" (required)" if item["required"] else "")
-            + (f"; enum: {json.dumps(item['enum'])}" if "enum" in item else "")
-        )
-        for child in item.get("properties", []):
-            lines.append(
-                f"  - `{child['name']}`: {child['type']}"
-                + (" (required)" if child["required"] else "")
-            )
-        for union in ("oneOf", "anyOf"):
-            if union in item:
-                lines.append(f"  - {union}: {json.dumps(item[union], ensure_ascii=False)}")
-    if not value["body"]:
-        lines.append("No top-level body properties.")
-    lines += [
-        "",
-        "200 response schema: "
-        + (
-            value["response_200"]
-            or ("inline" if value["response_schema"] is not None else "unspecified")
-        ),
-    ]
-    for key, tag in value["extensions"].items():
-        if key.startswith("x-as-") or "scope" in key:
-            lines.append(f"{key.removeprefix('x-as-')}: {json.dumps(tag, ensure_ascii=False)}")
-    if value["deprecated"]:
-        lines.append("Deprecated. Replacement: " + str(value["replacement"] or "not specified"))
-    return "\n".join(lines).strip()
+    from .help import describe_document, render_help
+
+    return render_help(describe_document(value))
 
 
 class Surface:
@@ -363,9 +322,9 @@ class Surface:
                     )
         return sorted(results, key=lambda row: row["operationId"])
 
-    def describe(self, name: str) -> dict[str, Any]:
+    def describe(self, name: str, *, full: bool = False) -> dict[str, Any]:
         _, index, operation = self.resolve(name)
-        return describe_operation(operation, index)
+        return describe_operation(operation, index, full=full)
 
     def topics(self) -> list[str]:
         topics: set[str] = set()
@@ -384,7 +343,17 @@ def parse_call_flags(
     """Derive flags from the record; leave type validation to the engine checker."""
     rules = alias_flags(operation)
     all_pages = "--all" in arguments
-    reserved = {"body", "field", "format", "validate-body", "help", "all"} | rules.keys()
+    reserved = {
+        "body",
+        "field",
+        "format",
+        "validate-body",
+        "help",
+        "all",
+        "confirm",
+        "full",
+        "examples",
+    } | rules.keys()
     if all_pages:
         reserved.add("limit")
     if "x-as-version" in operation.extensions:
@@ -412,6 +381,9 @@ def parse_call_flags(
         "format": "json",
         "validate_body": False,
         "help": False,
+        "confirm": False,
+        "full": False,
+        "examples": False,
     }
     special = {"--body", "--field", "--format"} | {"--" + alias for alias in rules}
     if all_pages:
@@ -424,7 +396,7 @@ def parse_call_flags(
         token = arguments[i]
         key, equal, value = token.partition("=")
         i += 1
-        if key in ("--validate-body", "--help", "--all") and not equal:
+        if key in ("--validate-body", "--help", "--all", "--confirm", "--full", "--examples") and not equal:
             options["all_pages" if key == "--all" else key[2:].replace("-", "_")] = True
             continue
         if key not in flags and key not in special:

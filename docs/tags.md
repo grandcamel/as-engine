@@ -192,3 +192,26 @@ and exhaustive generic tag-schema enforcement belong to their consumers.
 Confluence's build-seam tests separately verify these actual tag destinations,
 request parameters, lookup operations and response-schema paths resolve in the
 vendored documents, and that the resulting index carries the tags.
+
+## Help topics: x-as-topic
+
+An operation-level list of topic strings enrolls the operation in topic help,
+for example `"x-as-topic": ["adf", "representations"]`. Topic membership comes
+only from this enrichment tag, never base tags or text matching. The seed list
+and four-level rendering contract are in [help.md](help.md). Each new overlay
+action still carries full JAS-35 provenance and a unique `x-as-test` identifier.
+
+## Advisory prose: x-as-note
+
+An operation-level string holds the gotcha/help prose shown by topic help and
+Level 2. The existing error object's `note` uses this same extension. Notes may
+point to another operation or a lower tier without changing an operation's API
+behavior. Keep notes short enough for the help page's token budget.
+
+## Risk: x-as-risk
+
+An operation-level string is `safe`, `destructive`, or `irreversible` (absent
+means safe). Level 2 shows it. Product CLI adapters default destructive and
+irreversible operations to a zero-request JSON preview and require `--confirm`
+to invoke the normal guarded call path. Direct Surface calls do not implement
+this product CLI policy. See [help.md](help.md) for preview fields and limits.

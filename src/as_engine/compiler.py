@@ -211,6 +211,9 @@ def _operation_record(
             key: deepcopy(value) for key, value in operation.items() if key.startswith("x-")
         },
     }
+    full_description = operation.get("description")
+    if isinstance(full_description, str) and full_description != record["description"]:
+        record["full_description"] = full_description
     if response_schema is not None and response_200 is None:
         record["response_schema"] = deepcopy(response_schema)
     if response is not None:

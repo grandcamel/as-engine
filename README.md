@@ -128,3 +128,10 @@ These runtime additions require regenerating the product's packaged indexes thro
 its build hook; there is no runtime Base Document fallback.
 
 See [exit codes](docs/exit-codes.md) for the machine-readable failure contract.
+
+Progressive help is provided by `as_engine.help`: pure document builders for a
+product template, group/topic pages, operation details and existing enrichment
+examples, rendered consistently as Markdown or JSON. Descriptions support
+`full=True`; topic membership uses only `x-as-topic`, and `x-as-risk` is exposed
+for the product CLI's confirmation policy. See [docs/help.md](docs/help.md) for
+the tag shapes, character-based token caps and golden regeneration command.
