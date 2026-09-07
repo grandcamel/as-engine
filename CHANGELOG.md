@@ -65,6 +65,14 @@ core version it was released with (grand-camel-platform ADR 0013).
   output, Markdown and @file input at tagged fields, lossless placeholder
   round trips; the converters package gains a structural check_document helper
   (JAS-38 phase B)
+- JAS-41: `as_engine.simulation` — `SimulationStore` and `Simulation`, the
+  opt-in stateful transport double for Wrapper Verb tests (spaces, pages and
+  blog posts with versions, labels, restriction and space grants, content
+  properties, templates; a bounded CQL subset; explicit 501/400/404/409); the
+  `x-as-legacy-verbs` operation tag documented in `docs/tags.md`;
+  `transport.py`, `surface.py` and `errors.py` defer the HTTP and shared
+  error-library imports to first use so `api describe` no longer loads
+  `requests`. (JAS-41)
 
 ## [0.1.0a0] - 2026-09-06
 
