@@ -194,7 +194,7 @@ nonnegative elapsed time (24-hour days, seven-day weeks), **not Jira worklog
 calendar units**. A product needing workday semantics must register a separate
 format with explicit calendar configuration. Unknown formats are errors.
 
-## Exact phase-B wiring list
+## Exact phase-B wiring list (completed in JAS-38 phase B)
 
 1. Add `x-as-richtext`, `x-as-representation`, and relevant `x-as-format`
    product overlays with JAS-35 provenance/generated entry tests. Describe
@@ -220,6 +220,51 @@ format with explicit calendar configuration. Unknown formats are errors.
    invocations, formats, file errors, unsupported representations and final
    optional body-validation behavior. Test the nested-operation pipeline so
    prerequisite/version reads are not inadvertently converted at wrong paths.
+
+## Phase-B call options and validation
+
+The default registry now installs rich text at order 110 and scalar formats at
+30. `Surface.call(..., representation=None, raw=False)` carries these options
+in each call's Context. A child `context.invoke` returns stored response data
+for prerequisite/version consumers and receives no outer representation override;
+its request hooks and scope checks still run. Scope metadata reads retain their
+existing bounded resolver and never request or render body content.
+
+Product CLI adapters pass the operation to `build_body(..., operation=operation)`.
+An exact tagged `--field body=value` is literal Markdown, including `null`, `123`
+and JSON-looking prose. `--field body=@notes.md` reads UTF-8 text; all other
+fields keep JSON parsing and collision checks. Whole `--body @request.json` files
+and stdin remain JSON. An explicit envelope is already encoded input; its nested
+`value` is not parsed as Markdown. ADF objects at a json-string destination are
+encoded once for the request, and existing JSON strings retain their bytes.
+
+`--representation storage|atlas_doc_format` selects a declared representation;
+`--raw` bypasses only response rendering. The API's ordinary `body-format` query
+parameter must be supplied explicitly when requesting Confluence content. Neither
+call option invents or changes a vendor query parameter. Unknown representations,
+conflicting envelope/option representations, malformed tags, and `--raw` without
+a response descriptor fail before scope or prerequisite reads. Missing optional
+response fields stay missing; present malformed or unsupported envelopes fail.
+An omitted representation field in a response map envelope is resolved from its
+map key without adding metadata. Returned status, headers and other fields survive.
+
+Confluence's overlay covers page/blog create/update, single reads, six collection
+reads and the two version lists. Page and blog write schemas are structurally
+identical apart from prose; version bodies are at `/page/body` and `/blogpost/body`
+within `/results`. Version-detail responses contain no body and remain untagged.
+No date/duration input is invented for the vendor's date-time fields: synthetic
+product-neutral argv fixtures prove those scalar tags. The initial parameter check
+validates a parsed scalar against its schema while retaining caller spelling;
+the order-30 hook installs the parsed value before the normal final validation.
+
+Confluence's existing confirmation policy still applies: an `updatePage` call
+previews by default and requires `--confirm` for an operation send. Previewing
+converts local rich-text/scalar input but performs no lookup or transport call.
+`--validate-body` checks the final converted envelope. The pinned vendor
+PageBodyWrite/PageNestedBodyWrite `oneOf` overlap still rejects that envelope;
+valid ADF is independently proven against the vendored schema in argv tests.
+`check_document` supplies inexpensive structure/empty-text checks for encoded
+inputs without importing `jsonschema`; it is not a replacement for `validate_adf`.
 
 Jira's environment-selected automatic field wrapping remains product policy
 until that product migrates to tagged fields; it is not installed globally by

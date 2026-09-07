@@ -208,8 +208,14 @@ def _coerce(raw: Any, schema: Any, schemas: Mapping[str, Any], path: str) -> Any
 
 
 def validate_parameters(
-    operation: Operation, parameters: Mapping[str, Any], schemas: Mapping[str, Any]
+    operation: Operation, parameters: Mapping[str, Any], schemas: Mapping[str, Any],
+    *, defer_formats: bool = False,
 ) -> dict[str, Any]:
+    # Check tagged scalar input before any lookup, but retain the original
+    # value until the order-30 hook applies conversion to the call context.
+    from .converters.formats import parse
+
+    formats = scalar_formats(operation) if defer_formats else {}
     known = {parameter.get("name") for parameter in operation.parameters}
     unknown = set(parameters).difference(known)
     if unknown:
@@ -233,13 +239,64 @@ def validate_parameters(
             }
         )
         try:
-            result[name] = _coerce(parameters[name], schema, schemas, name)
+            key = (parameter.get("in"), name)
+            value = parse(parameters[name], formats[key]) if key in formats else parameters[name]
+            result[name] = _coerce(value, schema, schemas, name)
+            if key in formats:
+                result[name] = parameters[name]
         except ValueError as exc:
             raise ValueError(f"invalid parameter {name}: {exc}") from exc
     return result
 
 
-def build_body(source: str | None, fields: Sequence[str], stdin: TextIO | None = None) -> Any:
+def scalar_formats(operation: Operation) -> dict[tuple[str, str], str]:
+    """Validate scalar descriptors and return declared parameter parsers."""
+    from .converters.formats import PARSERS
+    from .transforms.values import parts
+
+    tags = operation.extensions.get("x-as-format", [])
+    if not isinstance(tags, list):
+        raise ValueError("x-as-format must be an array")
+    result: dict[tuple[str, str], str] = {}
+    seen: set[tuple[str, str]] = set()
+    for rule in tags:
+        if not isinstance(rule, dict) or not isinstance(rule.get("target"), dict):
+            raise ValueError("scalar format must declare a target")
+        target, format_name = rule["target"], rule.get("format")
+        if not isinstance(format_name, str) or format_name not in PARSERS:
+            raise ValueError("unknown scalar format")
+        location = target.get("in")
+        if location == "body":
+            path = target.get("path")
+            if not isinstance(path, str) or not parts(path):
+                raise ValueError("scalar body target must name a field")
+            key = (location, path)
+        elif location in ("path", "query", "header", "cookie"):
+            name = target.get("name")
+            if not isinstance(name, str) or sum(
+                p.get("name") == name and p.get("in") == location for p in operation.parameters
+            ) != 1:
+                raise ValueError("scalar tag names an unknown or ambiguous parameter")
+            key = (location, name)
+            result[key] = format_name
+        else:
+            raise ValueError("invalid scalar format target")
+        if key in seen:
+            raise ValueError("duplicate scalar format target")
+        seen.add(key)
+    return result
+
+
+def build_body(
+    source: str | None, fields: Sequence[str], stdin: TextIO | None = None,
+    *, operation: Operation | None = None,
+) -> Any:
+    from .transforms.richtext import request_paths
+    from .transforms.values import parts
+
+    rich_paths = {
+        tuple(parts(path)) for path in (request_paths(operation) if operation else [])
+    }
     body: Any = None
     if source is not None:
         if source == "-":
@@ -247,7 +304,7 @@ def build_body(source: str | None, fields: Sequence[str], stdin: TextIO | None =
         elif source.startswith("@") and len(source) > 1:
             try:
                 content = Path(source[1:]).read_text(encoding="utf-8")
-            except OSError as exc:
+            except (OSError, UnicodeError) as exc:
                 raise ValueError(f"cannot read body file: {source[1:]}") from exc
         else:
             raise ValueError("body source must be @file or -")
@@ -279,6 +336,14 @@ def build_body(source: str | None, fields: Sequence[str], stdin: TextIO | None =
             current = current[piece]
         if pieces[-1] in current:
             raise ValueError(f"body field collides at {path}")
+        if tuple(pieces) in rich_paths:
+            if raw.startswith("@"):
+                try:
+                    raw = Path(raw[1:]).read_text(encoding="utf-8")
+                except (OSError, UnicodeError) as exc:
+                    raise ValueError(f"cannot read rich-text file: {raw[1:]}") from exc
+            current[pieces[-1]] = raw
+            continue
         try:
             current[pieces[-1]] = json.loads(raw)
         except json.JSONDecodeError:
@@ -314,7 +379,10 @@ def alias_flags(operation: Operation) -> dict[str, dict[str, Any]]:
         if not isinstance(rule, dict) or not isinstance(rule.get("alias"), str):
             raise ValueError("prerequisite must declare an alias")
         alias = rule["alias"]
-        if alias in {"body", "field", "format", "validate-body", "help", "all", "limit", "version"}:
+        if alias in {
+            "body", "field", "format", "validate-body", "help", "all", "limit", "version",
+            "representation", "raw",
+        }:
             raise ValueError("prerequisite alias collides with a call option")
         target = rule.get("target")
         if not isinstance(target, dict) or target.get("in") not in {"body", "path", "query"}:

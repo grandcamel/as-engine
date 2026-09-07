@@ -14,6 +14,7 @@ from .errors import SurfaceError, messages_from
 from .index import Operation, OperationIndex, ProductIndexes
 from .params import alias_flags, body_errors, kebab_case, validate_parameters
 from .transforms import Context, Registry, default_registry
+from .transforms.richtext import validate_options
 from .transforms.values import MISSING, set_target, target_value
 from .transport import Response, Transport
 
@@ -156,6 +157,8 @@ class Surface:
         scope_allowlist: Sequence[str] | None = None,
         scope_allow_site: bool | None = None,
         scope_argv_identity: str | None = None,
+        representation: str | None = None,
+        raw: bool = False,
     ) -> Response:
         document, index, operation = self.resolve(name)
         note = operation.extensions.get("x-as-note")
@@ -173,6 +176,8 @@ class Surface:
             keys: Mapping[str, str] | None = None,
             supplied_version: int | None = None,
             notify: Callable[[str], None] | None = None,
+            selected_representation: str | None = None,
+            raw_response: bool = True,
         ) -> Response:
             nonlocal final_body
             if op.operationId in active:
@@ -199,7 +204,7 @@ class Surface:
                     {**p, "required": False} if p["name"] in deferred else p for p in op.parameters
                 ],
             )
-            checked = validate_parameters(partial, values, index.schemas)
+            checked = validate_parameters(partial, values, index.schemas, defer_formats=True)
 
             def transport() -> Transport:
                 if document not in transports:
@@ -252,6 +257,8 @@ class Surface:
                 scope_argv_identity=scope_argv_identity,
                 scope_resolution_rules=self.scope_resolution_rules,
                 scope_send=lambda target, params, payload: transport().call(target, params, payload),
+                representation=selected_representation,
+                raw=raw_response,
             )
             if supplied_version is not None:
                 tag = op.extensions.get("x-as-version")
@@ -285,6 +292,7 @@ class Surface:
                 active.remove(op.operationId)
 
         try:
+            validate_options(operation, body, representation=representation, raw=raw)
             return execute(
                 operation,
                 parameters,
@@ -294,6 +302,8 @@ class Surface:
                 keys=aliases,
                 supplied_version=version,
                 notify=warn,
+                selected_representation=representation,
+                raw_response=raw,
             )
         except BaseAPIError as exc:
             error = SurfaceError.from_domain(exc)
@@ -371,6 +381,8 @@ def parse_call_flags(
         "confirm",
         "full",
         "examples",
+        "representation",
+        "raw",
     } | rules.keys()
     if all_pages:
         reserved.add("limit")
@@ -402,8 +414,12 @@ def parse_call_flags(
         "confirm": False,
         "full": False,
         "examples": False,
+        "representation": None,
+        "raw": False,
     }
-    special = {"--body", "--field", "--format"} | {"--" + alias for alias in rules}
+    special = {"--body", "--field", "--format", "--representation"} | {
+        "--" + alias for alias in rules
+    }
     if all_pages:
         special.add("--limit")
     if "x-as-version" in operation.extensions:
@@ -414,7 +430,12 @@ def parse_call_flags(
         token = arguments[i]
         key, equal, value = token.partition("=")
         i += 1
-        if key in ("--validate-body", "--help", "--all", "--confirm", "--full", "--examples") and not equal:
+        if key in (
+            "--validate-body", "--help", "--all", "--confirm", "--full", "--examples", "--raw"
+        ) and not equal:
+            if key == "--raw" and key in seen_options:
+                raise ValueError(f"Duplicate flag: {key}")
+            seen_options.add(key)
             options["all_pages" if key == "--all" else key[2:].replace("-", "_")] = True
             continue
         if key not in flags and key not in special:
@@ -455,6 +476,9 @@ def parse_call_flags(
         elif key == "--field":
             options["field"].append(value)
         else:
+            if key == "--representation" and key in seen_options:
+                raise ValueError(f"Duplicate flag: {key}")
+            seen_options.add(key)
             options[key[2:]] = value
     if options["format"] not in ("json", "table", "markdown"):
         raise ValueError("--format must be json, table or markdown")

@@ -10,7 +10,7 @@ from .adf import adf_to_markdown, markdown_to_adf
 from .placeholders import TOKEN_RE, decode
 from .schema import validate_adf
 
-__all__ = ["convert", "render", "validate_adf"]
+__all__ = ["check_document", "convert", "render", "validate_adf"]
 
 
 def convert(text: str, source: str = "markdown", target: str = "adf") -> Any:
@@ -49,3 +49,43 @@ def render(
     from .storage import xhtml_to_markdown
 
     return xhtml_to_markdown(document, placeholders=placeholders)
+
+
+def check_document(document: Any, source: str = "adf") -> None:
+    """Check wire document structure without loading the optional ADF schema.
+
+    This inexpensive check is used by tagged transforms for encoded inputs.
+    Full schema conformance remains the explicit validate_adf API. Invalid
+    encoded data uses ValueError consistently with the Surface usage contract.
+    """
+    if source == "storage":
+        if not isinstance(document, str):
+            raise ValueError("Storage document must be a string")
+        return
+    if source != "adf":
+        raise ValueError("Unsupported document representation")
+    if not isinstance(document, dict):
+        raise ValueError("ADF document must be an object")  # noqa: TRY004
+    if (
+        document.get("type") != "doc"
+        or type(document.get("version")) is not int
+        or document["version"] != 1
+    ):
+        raise ValueError("ADF document must have type doc and version 1")
+    if not isinstance(document.get("content"), list):
+        raise ValueError("ADF document content must be a list")  # noqa: TRY004
+
+    def walk(node: Any) -> None:
+        if not isinstance(node, dict) or not isinstance(node.get("type"), str):
+            raise ValueError("ADF nodes must be objects with a type")  # noqa: TRY004
+        if node.get("type") == "text" and (
+            not isinstance(node.get("text"), str) or not node["text"]
+        ):
+            raise ValueError("ADF text nodes must be nonempty")
+        if "content" in node:
+            if not isinstance(node["content"], list):
+                raise ValueError("ADF node content must be a list")
+            for child in node["content"]:
+                walk(child)
+
+    walk(document)

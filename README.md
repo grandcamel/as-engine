@@ -135,3 +135,12 @@ examples, rendered consistently as Markdown or JSON. Descriptions support
 `full=True`; topic membership uses only `x-as-topic`, and `x-as-risk` is exposed
 for the product CLI's confirmation policy. See [docs/help.md](docs/help.md) for
 the tag shapes, character-based token caps and golden regeneration command.
+
+Rich-text tags now connect the shared converters to the Surface: tagged Markdown
+fields become storage or ADF, and tagged responses render as Markdown with lossless
+placeholders while retaining metadata. `representation=` chooses a declared write
+representation and `raw=True` returns stored response data; neither option changes
+vendor query parameters. `build_body(..., operation=operation)` preserves tagged
+Markdown fields and reads UTF-8 `@file` values. Date/duration tags use the scalar
+parser registry. See [rich text](docs/richtext.md) for encoding, lookup isolation,
+CLI integration and the optional final-body validation contract.

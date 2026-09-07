@@ -98,3 +98,22 @@ limits reads to two per context, and marks the copied operation
 `scope_send` callback is supplied by Surface and is used only by that resolver.
 See [guard.md](guard.md) for resolution steps, default-deny decisions, per-product
 coverage, lookup counts, and the explicitly authorized privacy exception.
+
+## Rich-text and scalar context options
+
+`Surface.call(..., representation=None, raw=False)` adds `Context.representation`
+and `Context.raw` for the operation's rich-text hooks. Both are per-call state;
+`raw` skips response rendering and retains request conversion/validation. Options
+and explicit envelope conflicts are validated locally before lookup hooks. The
+default ordering is scope (5), prerequisites (10), version (20), formats (30),
+paging (100), rich text (110). Response rich text therefore sees a complete
+aggregated array or the one-page wrapper and changes only tagged values.
+
+Nested `context.invoke` calls have raw response data and no outer representation
+override, preserving IDs, versions and lookup paths. Their input, paging and scope
+hooks continue to run; the dedicated scope resolver still bypasses all hooks.
+The initial parameter checker verifies formatted scalar inputs against their parsed
+type and bounds without replacing the original value until the formats hook runs.
+Tagged CLI body fields use `build_body(..., operation=operation)` to retain Markdown
+or load UTF-8 `@file` input. See [rich-text contracts](richtext.md) for descriptors,
+representations, placeholders and final body validation.

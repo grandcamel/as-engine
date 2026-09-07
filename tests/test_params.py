@@ -168,3 +168,29 @@ def test_body_ref_escapes_component_name_and_does_not_coerce():
 def test_body_rejects_unsupported_validation_keywords_instead_of_ignoring_them():
     operation = _operation(request_body={"schema": {"type": "string", "pattern": "[a-z]+"}})
     assert body_errors(operation, "123", {}) == ["body: unsupported schema validator: pattern"]
+
+
+@pytest.mark.parametrize("text", ["null", "true", "123", '{"x": 1}', '"quoted"', "# Notes\n\nUnicode λ"])
+def test_tagged_fields_preserve_markdown_and_untagged_fields_keep_json(tmp_path, text):
+    operation = _operation()
+    operation.extensions["x-as-richtext"] = [{"request": {"path": "/fields/a~1b~0c", "shape": "value"}, "representations": {"adf": {"converter": "adf", "encoding": "object"}}}]
+    path = tmp_path / "note.md"
+    path.write_text(text, encoding="utf-8")
+    for raw in (text, "@" + str(path)):
+        assert build_body(None, ["fields.a/b~c=" + raw, "count=3"], operation=operation) == {
+            "fields": {"a/b~c": text}, "count": 3,
+        }
+    assert build_body(None, ["plain=@missing", "number=123"]) == {"plain": "@missing", "number": 123}
+
+
+@pytest.mark.parametrize("bad", ["missing", "invalid-utf8", "directory"])
+def test_tagged_file_errors_are_usage_errors(tmp_path, bad):
+    operation = _operation()
+    operation.extensions["x-as-richtext"] = [{"request": {"path": "/body", "shape": "envelope"}, "representations": {"storage": {"converter": "storage", "encoding": "string"}}}]
+    path = tmp_path / bad
+    if bad == "invalid-utf8":
+        path.write_bytes(b"\xff")
+    elif bad == "directory":
+        path.mkdir()
+    with pytest.raises(ValueError, match="cannot read rich-text file"):
+        build_body(None, ["body=@" + str(path)], operation=operation)

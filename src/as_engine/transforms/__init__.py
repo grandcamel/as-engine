@@ -42,6 +42,8 @@ class Context:
     scope_argv_identity: str | None = None
     scope_resolution_rules: Mapping[str, tuple[tuple[str, ...], ...]] = field(default_factory=dict)
     scope_send: Callable[[Operation, Mapping[str, Any], Any], Response] | None = None
+    representation: str | None = None
+    raw: bool = False
 
     def resolve_scope(self, operation_id: str, parameters: Mapping[str, Any]) -> Response:
         """Issue a bounded metadata read under consumer-supplied resolution policy."""
@@ -78,8 +80,10 @@ class Registry:
 
 
 def default_registry() -> Registry:
+    from .formats import Formats
     from .paging import Paging
     from .prerequisites import Prerequisites
+    from .richtext import RichText
     from .scope import Scope
     from .version import Version
 
@@ -87,5 +91,7 @@ def default_registry() -> Registry:
     registry.register("x-as-scope", Scope(), order=5)
     registry.register("x-as-prerequisites", Prerequisites(), order=10)
     registry.register("x-as-version", Version(), order=20)
+    registry.register("x-as-format", Formats(), order=30)
     registry.register("x-as-paging", Paging(), order=100)
+    registry.register("x-as-richtext", RichText(), order=110)
     return registry

@@ -230,3 +230,23 @@ def test_malformed_scope_tag_refuses_locally_before_factory(tmp_path, tag):
     assert caught.value.code == 4 and caught.value.status is None
     assert caught.value.operation == "createThing" and "allowlist" in str(caught.value)
     assert factories == []
+
+
+def test_richtext_flags_reserve_spec_parameter_names_and_reject_duplicates(tmp_path):
+    indexes = product(tmp_path, parameters=[
+        {"name": "representation", "in": "query", "schema": {"type": "string"}},
+        {"name": "raw", "in": "query", "schema": {"type": "boolean"}},
+    ])
+    operation = indexes.find("createThing")[2]
+    params, options = parse_call_flags(operation, [
+        "--representation", "storage", "--raw", "--parameter-representation", "wire", "--parameter-raw", "false"
+    ])
+    assert params == {"representation": "wire", "raw": "false"}
+    assert options["representation"] == "storage" and options["raw"] is True
+    for flags in (["--raw", "--raw"], ["--representation=a", "--representation=b"], ["--raw=false"], ["--representation"]):
+        with pytest.raises(ValueError):
+            parse_call_flags(operation, flags)
+    surface = Surface(indexes, lambda *_: pytest.fail("transport factory must not run"))
+    with pytest.raises(SurfaceError) as error:
+        surface.call("createThing", {}, raw=True)
+    assert error.value.code == 2
