@@ -50,6 +50,16 @@ loading the shared package's HTTP dependencies.
 
 ## Development
 
+**Development prerequisites:** `pip install -e '.[dev]'` includes hatchling and
+build; check local wheel and source builds with `python -m build --no-isolation`.
+For Base Document refreshes, install oasdiff 1.31.0: on macOS run
+`curl --fail --location --retry 3 --output oasdiff.tar.gz https://github.com/oasdiff/oasdiff/releases/download/1.31.0/oasdiff_1.31.0_darwin_all.tar.gz`;
+on Linux run
+`curl --fail --location --retry 3 --output oasdiff.tar.gz https://github.com/oasdiff/oasdiff/releases/download/1.31.0/oasdiff_1.31.0_linux_amd64.tar.gz`.
+Then run `tar -xzf oasdiff.tar.gz oasdiff` and `chmod +x oasdiff`, and place the
+binary on PATH (required by the refresh acceptance test), or set
+`OASDIFF=/path/to/oasdiff` for the refresh script.
+
 ```bash
 pip install -e ".[dev]"
 pytest

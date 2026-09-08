@@ -6,6 +6,8 @@ docs/plans/atlassian-tooling-v2-spec-2026-09.md) and docs/adr/ here.
 
 ## Commands
 
+Development prerequisites: see [README.md](README.md#development) for `pip install -e '.[dev]'` (includes hatchling and build), `python -m build --no-isolation`, oasdiff 1.31.0 installation and `OASDIFF=/path/to/oasdiff`.
+
 ```bash
 pip install -e ".[dev]"
 pytest                 # unit tests; coverage floor enforced in CI
