@@ -109,6 +109,9 @@ core version it was released with (grand-camel-platform ADR 0013).
   on the rich-text transform — repeatable `--adf-field` on the surface and
   cached instance-field metadata on `Context` execute the textarea marker
   (JAS-49; comment 12320). (JAS-49)
+- Declare hatchling and build in the dev extra, document development
+  prerequisites (no-isolation builds, oasdiff 1.31.0 install, OASDIFF
+  override), and build distributions in test CI. (JAS-58)
 
 ## [0.1.0a0] - 2026-09-06
 
