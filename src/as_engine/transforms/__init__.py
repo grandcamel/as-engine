@@ -44,6 +44,8 @@ class Context:
     scope_send: Callable[[Operation, Mapping[str, Any], Any], Response] | None = None
     representation: str | None = None
     raw: bool = False
+    adf_fields: tuple[str, ...] = ()
+    textarea_fields: tuple[str, ...] = ()
 
     def resolve_scope(self, operation_id: str, parameters: Mapping[str, Any]) -> Response:
         """Issue a bounded metadata read under consumer-supplied resolution policy."""

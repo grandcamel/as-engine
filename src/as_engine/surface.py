@@ -179,6 +179,8 @@ class Surface:
         representation: str | None = None,
         raw: bool = False,
         output: str | Path | None = None,
+        adf_fields: Sequence[str] = (),
+        textarea_fields: Sequence[str] = (),
     ) -> Response:
         from assistant_skills_lib.error_handler import BaseAPIError  # type: ignore[import-untyped]
 
@@ -291,6 +293,8 @@ class Surface:
                 scope_send=lambda target, params, payload: transport().call(target, params, payload),
                 representation=selected_representation,
                 raw=raw_response,
+                adf_fields=tuple(adf_fields) if op is operation else (),
+                textarea_fields=tuple(textarea_fields) if op is operation else (),
             )
             if supplied_version is not None:
                 tag = op.extensions.get("x-as-version")
@@ -324,6 +328,12 @@ class Surface:
                 active.remove(op.operationId)
 
         try:
+            from .transforms.richtext import custom_field_descriptors, custom_field_ids
+
+            selected_adf_fields = custom_field_ids(adf_fields)
+            custom_field_ids(textarea_fields)
+            if selected_adf_fields and not custom_field_descriptors(operation, selected_adf_fields):
+                raise ValueError("--adf-field requires a declared textarea custom-field location")
             validate_options(operation, body, representation=representation, raw=raw)
             return execute(
                 operation,
@@ -415,6 +425,7 @@ def parse_call_flags(
         "examples",
         "representation",
         "raw",
+        "adf-field",
     } | rules.keys()
     if all_pages:
         reserved.add("limit")
@@ -458,8 +469,9 @@ def parse_call_flags(
         "examples": False,
         "representation": None,
         "raw": False,
+        "adf_fields": [],
     }
-    special = {"--body", "--field", "--format", "--representation"} | {
+    special = {"--body", "--field", "--format", "--representation", "--adf-field"} | {
         "--" + alias for alias in rules
     }
     if all_pages:
@@ -517,6 +529,10 @@ def parse_call_flags(
             options["aliases"][key[2:]] = value
         elif key == "--field":
             options["field"].append(value)
+        elif key == "--adf-field":
+            from .transforms.richtext import custom_field_ids
+
+            options["adf_fields"].extend(custom_field_ids([value]))
         else:
             if key == "--representation" and key in seen_options:
                 raise ValueError(f"Duplicate flag: {key}")

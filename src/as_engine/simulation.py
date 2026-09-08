@@ -576,3 +576,304 @@ class Simulation:
         account = self._id(params["accountId"])
         if not any(self._id(x.get("accountId")) == account for x in self.store.users): return self._error(404, "User not found")
         return self._results(self.store.groups.get(account, []))
+
+
+class JiraSimulationStore:
+    """Independent Jira state for wrapper tests; never uses Confluence defaults."""
+
+    issues: list[dict[str, Any]]
+    projects: list[dict[str, Any]]
+    fields: list[dict[str, Any]]
+    users: list[dict[str, Any]]
+    boards: list[dict[str, Any]]
+    sprints: list[dict[str, Any]]
+    customers: list[dict[str, Any]]
+    transitions: dict[str, Any]
+    desk_customers: dict[str, Any]
+    requests: dict[str, Any]
+    approvals: dict[str, Any]
+    slas: dict[str, Any]
+    articles: dict[str, Any]
+
+    _collections = (
+        "issues", "projects", "fields", "transitions", "users", "sprints", "boards",
+        "customers", "desk_customers", "requests", "approvals", "slas", "articles",
+    )
+
+    def __init__(self, seed: dict[str, Any] | None = None) -> None:
+        state: dict[str, Any] = {
+            "projects": [{"id": "10000", "key": "SBX", "name": "Sandbox"}],
+            "issues": [
+                {"id": str(n), "key": f"SBX-{n}", "fields": {
+                    "project": {"key": "SBX", "id": "10000"},
+                    "summary": title, "issuetype": {"name": "Task"},
+                    "status": {"name": "Open", "statusCategory": {"key": "new", "name": "To Do"}}, "priority": {"name": "Medium"},
+                    "labels": [], "issuelinks": [], "subtasks": [],
+                    "comment": {"comments": []}, "worklog": {"worklogs": []},
+                }} for n, title in ((1, "First task"), (2, "Second task"))
+            ],
+            "fields": [
+                {"id": "summary", "name": "Summary", "custom": False, "schema": {"type": "string"}},
+                {"id": "customfield_10010", "name": "Notes", "custom": True,
+                 "schema": {"type": "string", "custom": "com.atlassian.jira.plugin.system.customfieldtypes:textarea"}},
+                {"id": "customfield_10016", "name": "Story Points", "custom": True, "schema": {"type": "number"}},
+            ],
+            "transitions": {"*": [
+                {"id": "11", "name": "Reopen", "to": {"name": "Open", "statusCategory": {"key": "new", "name": "To Do"}}},
+                {"id": "21", "name": "In Progress", "to": {"name": "In Progress", "statusCategory": {"key": "indeterminate", "name": "In Progress"}}},
+                {"id": "31", "name": "Done", "to": {"name": "Done", "statusCategory": {"key": "done", "name": "Done"}}},
+            ]},
+            "users": [{"accountId": "sim-user", "displayName": "Simulation User"}],
+            "boards": [{"id": 1, "name": "Sandbox board", "projectKey": "SBX"}],
+            "sprints": [], "customers": [], "desk_customers": {},
+            "requests": {}, "approvals": {}, "slas": {}, "articles": {},
+        }
+        if seed is not None:
+            if not isinstance(seed, dict) or set(seed) - set(self._collections):
+                raise ValueError("Jira simulation seed has unknown collections")
+            state.update(deepcopy(seed))
+        for name in self._collections:
+            if not isinstance(state[name], dict if name in {"transitions", "desk_customers", "requests", "approvals", "slas", "articles"} else list):
+                raise TypeError(f"invalid Jira simulation collection: {name}")
+            setattr(self, name, state[name])
+        self.calls: list[tuple[str, dict[str, Any], Any]] = []
+
+    def snapshot(self) -> dict[str, Any]:
+        return deepcopy({name: getattr(self, name) for name in self._collections})
+
+
+class JiraSimulation:
+    """Jira transport with explicit operation support and no fallback."""
+
+    def __init__(self, store: JiraSimulationStore) -> None:
+        self.store = store
+        self.calls = store.calls
+
+    def close(self) -> None:
+        """No external resources."""
+
+    def call(self, operation: Operation, parameters: Mapping[str, Any], body: Any,
+             *, output: str | Path | None = None) -> Response:
+        self.calls.append((operation.operationId, deepcopy(dict(parameters)), deepcopy(body)))
+        try:
+            return self._call(operation.operationId, dict(parameters), deepcopy(body))
+        except (ValueError, TypeError, KeyError) as exc:
+            return Response(400, {"errorMessages": [str(exc)]})
+
+    @staticmethod
+    def _page(rows: list[Any], p: dict[str, Any], *, jsm: bool = False) -> dict[str, Any]:
+        start = int(p.get("start" if jsm else "startAt", 0))
+        limit = int(p.get("limit" if jsm else "maxResults", 50))
+        if start < 0 or limit <= 0:
+            raise ValueError("invalid simulation page bounds")
+        result: dict[str, Any] = {"values": deepcopy(rows[start:start + limit])}
+        if jsm:
+            result.update({"start": start, "limit": limit, "isLastPage": start + limit >= len(rows)})
+        else:
+            result.update({"startAt": start, "maxResults": limit, "total": len(rows), "isLast": start + limit >= len(rows)})
+        return result
+
+    def _search(self, jql: str) -> list[dict[str, Any]]:
+        import re
+
+        split = re.split(r"\s+ORDER\s+BY\s+", jql, flags=re.IGNORECASE)
+        query = split[0].strip()
+        rows = list(self.store.issues)
+        for clause in re.split(r"\s+AND\s+", query, flags=re.IGNORECASE):
+            comparison = re.fullmatch(r'(timespent|created|updated)\s*(>=|<=|>|<|=)\s*["\']?([^"\']+)["\']?', clause.strip(), re.IGNORECASE)
+            if comparison:
+                field, operator, expected = comparison.groups()
+                remaining = []
+                for issue in rows:
+                    current = issue["fields"].get(field.lower())
+                    if field.lower() == "timespent":
+                        current = current if current is not None else sum(log.get("timeSpentSeconds", 0) for log in issue["fields"].get("worklog", {}).get("worklogs", []))
+                        wanted: Any = float(expected)
+                    else:
+                        wanted = expected.strip()
+                        current = str(current or "")[:len(wanted)]
+                    matched = {">": current > wanted, ">=": current >= wanted, "<": current < wanted, "<=": current <= wanted, "=": current == wanted}[operator]
+                    if matched:
+                        remaining.append(issue)
+                rows = remaining
+                continue
+            match = re.fullmatch(r'(project|status|statusCategory|key|issuekey|sprint|issuetype|assignee)\s*(=|!=|IN|NOT IN)\s*(.+)', clause.strip(), re.IGNORECASE)
+            if not match:
+                raise ValueError(f"unsupported simulation JQL clause: {clause}")
+            field, operator, value = match.groups()
+            operator = operator.upper()
+            values = [v.strip().strip("\"'") for v in value.strip("()").split(",")]
+            def selected(issue: dict[str, Any], field: str = field, values: list[str] = values, operator: str = operator) -> bool:
+                if field.lower() == "statuscategory":
+                    category = issue["fields"].get("status", {}).get("statusCategory", {})
+                    if not category.get("key"):
+                        raise ValueError("simulation status requires statusCategory")
+                    found = str(category["key"]).casefold() in [value.casefold() for value in values]
+                    return not found if operator in {"!=", "NOT IN"} else found
+                if field.lower() in {"key", "issuekey"}:
+                    current = issue["key"]
+                else:
+                    current = issue["fields"].get(field.lower())
+                    if isinstance(current, dict):
+                        current = current.get("key", current.get("accountId", current.get("name")))
+                found = str(current) in values
+                return not found if operator in {"!=", "NOT IN"} else found
+            rows = [issue for issue in rows if selected(issue)]
+        if len(split) > 1:
+            order = re.fullmatch(r"(key|created|updated)(?:\s+(ASC|DESC))?", split[1].strip(), re.IGNORECASE)
+            if len(split) != 2 or order is None:
+                raise ValueError("unsupported simulation ordering")
+            field, direction = order.groups()
+            rows.sort(key=lambda row: str(row.get("key") if field.lower() == "key" else row["fields"].get(field.lower(), "")), reverse=(direction or "ASC").upper() == "DESC")
+        return deepcopy(rows)
+
+    def _call(self, name: str, p: dict[str, Any], body: Any) -> Response:
+        s = self.store
+        b = body or {}
+        key = str(p.get("issueIdOrKey", ""))
+        issue = next((i for i in s.issues if key in {i["key"], str(i["id"])}), None)
+        if name == "searchAndReconsileIssuesUsingJql":
+            rows = self._search(p.get("jql", ""))
+            start = int(p.get("nextPageToken", 0))
+            limit = int(p.get("maxResults", 50))
+            if start < 0 or limit < 1:
+                raise ValueError("invalid simulation search page")
+            result: dict[str, Any] = {"issues": rows[start:start + limit], "isLast": start + limit >= len(rows)}
+            if not result["isLast"]:
+                result["nextPageToken"] = str(start + limit)
+            return Response(200, result)
+        if name == "getFields":
+            return Response(200, deepcopy(s.fields))
+        if name == "getAutoComplete":
+            return Response(200, {"visibleFieldNames": [{**deepcopy(row), "value": row.get("value", row.get("id", "")), "displayName": row.get("displayName", row.get("name", "")), **({"cfid": row["id"]} if row.get("custom") and "id" in row else {})} for row in s.fields], "visibleFunctionNames": [{"value": "currentUser()", "displayName": "currentUser()"}], "jqlReservedWords": ["AND", "OR", "ORDER BY"]})
+        if name == "getFieldAutoCompleteForQueryString":
+            values = [{"value": x["name"], "displayName": x["name"]} for x in s.projects if str(p.get("fieldValue", "")).lower() in x["name"].lower()]
+            return Response(200, {"results": values})
+        if name == "parseJqlQueries":
+            return Response(200, {"queries": [{"query": q, "errors": []} for q in b.get("queries", [])]})
+        if name == "searchProjects":
+            rows = [x for x in s.projects if not p.get("keys") or x["key"] in p["keys"]]
+            return Response(200, self._page(rows, p))
+        if name in {"getProject", "getAllStatuses", "getProjectVersions", "getProjectComponents"}:
+            project = next((x for x in s.projects if str(p["projectIdOrKey"]) in {x["key"], str(x["id"])}), None)
+            if project is None:
+                return Response(404, {"errorMessages": ["Project not found"]})
+            value = project if name == "getProject" else project.get({"getAllStatuses": "statuses", "getProjectVersions": "versions", "getProjectComponents": "components"}[name], [])
+            return Response(200, deepcopy(value))
+        if name in {"getIssueAllTypes", "getPriorities", "findAssignableUsers", "getCurrentUser"}:
+            value = {"getIssueAllTypes": [{"id": "10001", "name": "Task"}], "getPriorities": [{"id": "3", "name": "Medium"}], "findAssignableUsers": s.users, "getCurrentUser": s.users[0] if s.users else {}}[name]
+            return Response(200, deepcopy(value))
+        if name == "createIssue":
+            fields = deepcopy(b["fields"])
+            project = fields["project"]["key"]
+            number = max([int(x["key"].rsplit("-", 1)[1]) for x in s.issues if x["key"].startswith(project + "-")] + [0]) + 1
+            created = {"id": str(max([int(x["id"]) for x in s.issues] + [0]) + 1), "key": f"{project}-{number}", "fields": fields}
+            fields.setdefault("status", {"name": "Open"})
+            fields.setdefault("issuelinks", [])
+            fields.setdefault("subtasks", [])
+            s.issues.append(created)
+            parent_key = fields.get("parent", {}).get("key")
+            parent = next((x for x in s.issues if x["key"] == parent_key), None)
+            if parent:
+                parent["fields"].setdefault("subtasks", []).append({"id": created["id"], "key": created["key"]})
+            return Response(201, {"id": created["id"], "key": created["key"]})
+        if name == "linkIssues":
+            inward = next((x for x in s.issues if x["key"] == b["inwardIssue"]["key"]), None)
+            outward = next((x for x in s.issues if x["key"] == b["outwardIssue"]["key"]), None)
+            if inward is None or outward is None:
+                return Response(404, {"errorMessages": ["Link target not found"]})
+            link_id = str(1 + sum(len(x["fields"].get("issuelinks", [])) for x in s.issues))
+            for source, target, direction in ((inward, outward, "outwardIssue"), (outward, inward, "inwardIssue")):
+                source["fields"].setdefault("issuelinks", []).append({"id": link_id, "type": deepcopy(b["type"]), direction: {"key": target["key"], "id": target["id"]}})
+            return Response(201, None)
+        if key and name in {"getIssue", "getTransitions", "getCustomerTransitions", "doTransition", "performCustomerTransition", "editIssue", "assignIssue", "deleteIssue", "getIssueWorklog", "addWorklog", "addComment", "getCustomerRequestByIdOrKey", "getApprovals", "getSlaInformation"}:
+            if issue is None:
+                return Response(404, {"errorMessages": ["Issue not found"]})
+            if name == "getIssue":
+                return Response(200, deepcopy(issue))
+            if name in {"getTransitions", "getCustomerTransitions"}:
+                values = deepcopy(s.transitions.get(issue["key"], s.transitions.get("*", [])))
+                return Response(200, {"transitions": values} if name == "getTransitions" else self._page(values, p, jsm=True))
+            if name in {"doTransition", "performCustomerTransition"}:
+                transition_id = str(b.get("transition", {}).get("id", b.get("id", "")))
+                transition = next((x for x in s.transitions.get(issue["key"], s.transitions.get("*", [])) if str(x["id"]) == transition_id), None)
+                if transition is None:
+                    raise ValueError("transition is not available")
+                comment = b.get("additionalComment")
+                if name == "performCustomerTransition" and comment is not None:
+                    if not isinstance(comment, dict) or not isinstance(comment.get("body"), str) or type(comment.get("public")) is not bool:
+                        raise ValueError("invalid customer transition comment")
+                    comments = issue["fields"].setdefault("comment", {}).setdefault("comments", [])
+                    comments.append({**deepcopy(comment), "id": str(len(comments) + 1)})
+                issue["fields"].update(deepcopy(b.get("fields", {})))
+                issue["fields"]["status"] = deepcopy(transition.get("to", {"name": transition["name"]}))
+                return Response(204, None)
+            if name == "editIssue":
+                issue["fields"].update(deepcopy(b.get("fields", {})))
+                return Response(204, None)
+            if name == "assignIssue":
+                issue["fields"]["assignee"] = None if b.get("accountId") is None else {"accountId": b["accountId"]}
+                return Response(204, None)
+            if name == "deleteIssue":
+                children = issue["fields"].get("subtasks", [])
+                if children and str(p.get("deleteSubtasks", "false")).lower() != "true":
+                    raise ValueError("issue has subtasks")
+                child_keys = {x["key"] for x in children}
+                s.issues[:] = [x for x in s.issues if x is not issue and x["key"] not in child_keys]
+                return Response(204, None)
+            if name in {"getIssueWorklog", "addWorklog", "addComment"}:
+                collection, items = ("comment", "comments") if name == "addComment" else ("worklog", "worklogs")
+                values = issue["fields"].setdefault(collection, {}).setdefault(items, [])
+                if name == "getIssueWorklog":
+                    page = self._page(values, p)
+                    page["worklogs"] = page.pop("values")
+                    return Response(200, page)
+                row = {**deepcopy(b), "id": str(len(values) + 1)}
+                values.append(row)
+                return Response(201, deepcopy(row))
+            if name == "getCustomerRequestByIdOrKey":
+                return Response(200, deepcopy(s.requests.get(issue["key"], {"issueKey": issue["key"], "serviceDeskId": "1", "requestFieldValues": [{"fieldId": "summary", "value": issue["fields"]["summary"]}]})))
+            if name in {"getApprovals", "getSlaInformation"}:
+                rows = (s.approvals if name == "getApprovals" else s.slas).get(issue["key"], [])
+                return Response(200, self._page(rows, p, jsm=True))
+        if name == "getAllBoards":
+            rows = [x for x in s.boards if not p.get("projectKeyOrId") or x.get("projectKey") == p["projectKeyOrId"]]
+            return Response(200, self._page(rows, p))
+        if name == "getAllSprints":
+            rows = [x for x in s.sprints if str(x.get("originBoardId")) == str(p["boardId"]) and (not p.get("state") or x["state"] == p["state"])]
+            return Response(200, self._page(rows, p))
+        if name in {"updateSprint", "partiallyUpdateSprint"}:
+            sprint = next((x for x in s.sprints if str(x["id"]) == str(p["sprintId"])), None)
+            if sprint is None:
+                return Response(404, {"errorMessages": ["Sprint not found"]})
+            if name == "updateSprint":
+                for field in ("name", "state", "goal", "startDate", "endDate", "completeDate"):
+                    sprint[field] = b.get(field)
+            else:
+                sprint.update(b)
+            return Response(200, deepcopy(sprint))
+        if name in {"moveIssuesToSprintAndRank", "moveIssuesToBacklog"}:
+            targets = [next((x for x in s.issues if x["key"] == k), None) for k in b["issues"]]
+            if any(x is None for x in targets):
+                return Response(404, {"errorMessages": ["Issue not found"]})
+            for target_issue in targets:
+                if target_issue is not None:
+                    target_issue["fields"]["sprint"] = p.get("sprintId")
+            return Response(204, None)
+        if name == "createCustomer":
+            if any(x["emailAddress"] == b["email"] for x in s.customers):
+                return Response(409, {"errorMessages": ["Customer already exists"]})
+            row = {"accountId": f"customer-{len(s.customers) + 1}", "emailAddress": b["email"], "displayName": b["displayName"]}
+            s.customers.append(row)
+            return Response(201, deepcopy(row))
+        if name == "addCustomers":
+            accounts = b["accountIds"]
+            if not set(accounts) <= {x["accountId"] for x in s.customers}:
+                raise ValueError("unknown customer")
+            saved = s.desk_customers.setdefault(str(p["serviceDeskId"]), [])
+            saved.extend(x for x in accounts if x not in saved)
+            return Response(204, None)
+        if name == "getServiceDeskArticles":
+            rows = [x for x in s.articles.get(str(p["serviceDeskId"]), []) if p["query"].lower() in x.get("title", "").lower()]
+            return Response(200, self._page(rows, p, jsm=True))
+        return Response(501, {"errorMessages": [f"Jira simulation does not implement {name}"]})

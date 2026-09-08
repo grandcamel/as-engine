@@ -312,13 +312,21 @@ def scalar_formats(operation: Operation) -> dict[tuple[str, str], str]:
 def build_body(
     source: str | None, fields: Sequence[str], stdin: TextIO | None = None,
     *, operation: Operation | None = None,
+    adf_fields: Sequence[str] = (), textarea_fields: Sequence[str] = (),
 ) -> Any:
-    from .transforms.richtext import request_paths
+    from .transforms.richtext import custom_field_descriptors, custom_field_ids, request_paths
     from .transforms.values import parts
 
     rich_paths = {
         tuple(parts(path)) for path in (request_paths(operation) if operation else [])
     }
+    selected_fields = (*custom_field_ids(adf_fields), *custom_field_ids(textarea_fields))
+    if operation is not None:
+        rich_paths.update(
+            tuple(parts(descriptor["request"]["path"]))
+            for descriptor in custom_field_descriptors(operation, selected_fields)
+            if "itemsPath" not in descriptor["request"]
+        )
     body: Any = None
     if source is not None:
         if source == "-":
@@ -346,6 +354,14 @@ def build_body(
         if "=" not in field:
             raise ValueError("body field must be path=value")
         path, raw = field.split("=", 1)
+        if operation is not None and re.fullmatch(r"customfield_[0-9]+", path):
+            locations = {
+                descriptor["request"]["path"]
+                for descriptor in custom_field_descriptors(operation, [path])
+                if "itemsPath" not in descriptor["request"]
+            }
+            if len(locations) == 1:
+                path = ".".join(parts(locations.pop()))
         pieces = path.split(".")
         if not path or any(not piece for piece in pieces):
             raise ValueError("body field path is invalid")

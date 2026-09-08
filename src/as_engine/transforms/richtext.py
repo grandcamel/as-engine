@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import copy
 import json
-from collections.abc import Mapping
+import re
+from collections.abc import Mapping, Sequence
 from typing import Any, NoReturn
 
 from ..converters import check_document, convert, render
@@ -18,6 +19,38 @@ _RESPONSE_SHAPES = {"value", "envelope", "representation-map"}
 
 def _fail(message: str) -> NoReturn:
     raise ValueError(message)
+
+
+def custom_field_ids(values: Sequence[str]) -> tuple[str, ...]:
+    """Validate supplied instance IDs without discovering or guessing metadata."""
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
+        _fail("ADF custom fields must be a sequence of customfield_<digits> IDs")
+    if any(not isinstance(value, str) or not re.fullmatch(r"customfield_[0-9]+", value)
+           for value in values):
+        _fail("ADF custom fields must use customfield_<digits> IDs")
+    return tuple(dict.fromkeys(values))
+
+
+def custom_field_descriptors(operation: Any, fields: Sequence[str]) -> list[dict[str, Any]]:
+    """Expand declared textarea locations, including tagged bulk envelopes."""
+    selected = custom_field_ids(fields)
+    if not selected:
+        return []
+    descriptors, _ = _descriptors(operation)
+    result = []
+    seen = set()
+    for descriptor in descriptors:
+        if descriptor.get("customFields") != "textarea":
+            continue
+        for field_id in selected:
+            request = descriptor["request"]
+            path = request["path"].rsplit("/", 1)[0] + "/" + field_id
+            identity = (request.get("itemsPath"), path)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            result.append({**descriptor, "request": {**request, "path": path}})
+    return result
 
 
 def _json_adf(value: Any) -> str:
@@ -278,6 +311,11 @@ class RichText(Transform):
         descriptors, representation_tag = _descriptors(context.operation)
         if tag != context.operation.extensions.get("x-as-richtext"):
             _fail("invalid rich-text transform tag")
+        selected_fields = (
+            *custom_field_ids(getattr(context, "textarea_fields", ())),
+            *custom_field_ids(getattr(context, "adf_fields", ())),
+        )
+        descriptors.extend(custom_field_descriptors(context.operation, selected_fields))
         override = getattr(context, "representation", None)
         body = copy.deepcopy(context.body)
         for descriptor in descriptors:

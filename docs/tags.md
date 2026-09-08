@@ -314,3 +314,20 @@ allowed projects without turning alternative body locations into permission to
 ignore one key. Missing/malformed keys, duplicate paths, arrays, conflicting
 metadata forms, and any disallowed project refuse. Numeric issue IDs are not
 project proof. Existing `path` / `paths` agreement semantics do not change.
+
+## Supplied textarea fields (JAS-49, comment 12320)
+
+`Surface.call` accepts per-call `adf_fields` and `textarea_fields` sequences of
+`customfield_<digits>` IDs. The product supplies cached instance metadata; the
+engine performs no discovery. Only descriptors with `customFields: "textarea"`
+are expanded, relative to their declared request parent and `itemsPath` when
+present. Duplicate IDs/locations convert once. Unselected custom fields keep
+their original values; validated ADF objects and permitted nulls pass through.
+An explicit override without a declared textarea location refuses.
+
+`parse_call_flags` accepts repeatable `--adf-field ID`. `build_body` takes the
+same two sequences for tagged UTF-8 `@file` input. On a single declared Jira
+custom-field envelope, `--field customfield_ID=value` is shorthand for the
+corresponding dotted path (normally `fields.customfield_ID`), including on a
+cold cache. Collisions between the two spellings refuse. The product must pass
+the same metadata snapshot to body construction, preview, and send.
