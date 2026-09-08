@@ -25,6 +25,13 @@ from .transport import (
     multipart_mode,
 )
 
+# Canonical names mapped to permitted statuses; None permits any status.
+RECORDED_RESPONSE_HEADERS: dict[str, tuple[int, ...] | None] = {
+    "Content-Type": None,
+    "Content-Disposition": None,
+    "Location": (201, 303),
+}
+
 
 def _json(value: Any) -> str:
     return json.dumps(
@@ -244,9 +251,15 @@ class Recorder:
         output: str | Path | None = None,
     ) -> Response:
         # Validate JSON before sending, and snapshot before a wrapped transport mutates inputs.
-        cassette_body = {"multipart": multipart_metadata(body)} if multipart_mode(operation) else body
+        cassette_body = (
+            {"multipart": multipart_metadata(body)} if multipart_mode(operation) else body
+        )
         request = deepcopy(
-            {"operationId": operation.operationId, "parameters": dict(parameters), "body": cassette_body}
+            {
+                "operationId": operation.operationId,
+                "parameters": dict(parameters),
+                "body": cassette_body,
+            }
         )
         _json(request)
         response = (
@@ -286,12 +299,25 @@ class Recorder:
         clean = _scrub_entries_preserving_binary(pending, self.scrubber)
         unique: dict[str, dict[str, Any]] = {}
         for item in clean:
+            # Discover secrets from all raw headers before narrowing recorded bytes.
+            recorded_response = item["response"]
+            headers = {
+                name.casefold(): value for name, value in recorded_response["headers"].items()
+            }
+            recorded_response["headers"] = {
+                name: headers[name.casefold()]
+                for name, statuses in RECORDED_RESPONSE_HEADERS.items()
+                if name.casefold() in headers
+                and (statuses is None or recorded_response["status"] in statuses)
+            }
             item["body_sha256"] = _hash(item["body"])
             key = _key(item)
             if key in unique and unique[key]["response"] != item["response"]:
                 raise ValueError("cassette has conflicting responses for " + operation.operationId)
             unique[key] = item
-        cassette_payload = _json({"format_version": 1, "interactions": list(unique.values())}) + "\n"
+        cassette_payload = (
+            _json({"format_version": 1, "interactions": list(unique.values())}) + "\n"
+        )
         temporary: Path | None = None
         try:
             with tempfile.NamedTemporaryFile(
@@ -328,7 +354,9 @@ class Player:
         *,
         output: str | Path | None = None,
     ) -> Response:
-        cassette_body = {"multipart": multipart_metadata(body)} if multipart_mode(operation) else body
+        cassette_body = (
+            {"multipart": multipart_metadata(body)} if multipart_mode(operation) else body
+        )
         request = {
             "operationId": operation.operationId,
             "parameters": dict(parameters),
@@ -347,14 +375,18 @@ class Player:
         response = deepcopy(entry["response"])
         if "body_base64" in response:
             if not binary_mode(operation, output):
-                raise ValueError("cassette binary response requires a binary operation or explicit output")
+                raise ValueError(
+                    "cassette binary response requires a binary operation or explicit output"
+                )
             if not 200 <= response["status"] < 300:
                 raise ValueError("cassette binary response must have a 2xx status")
             try:
                 payload = base64.b64decode(response["body_base64"], validate=True)
             except (ValueError, TypeError) as exc:
                 raise ValueError("invalid cassette binary response") from exc
-            return binary_response(Response(response["status"], payload, response["headers"]), output)
+            return binary_response(
+                Response(response["status"], payload, response["headers"]), output
+            )
         if (
             operation.extensions.get("x-as-response") == {"kind": "binary"}
             and 200 <= response["status"] < 300

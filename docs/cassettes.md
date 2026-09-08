@@ -65,6 +65,18 @@ and scrubbed body hash, without printing parameter/body values. It raises
 `ValueError` (usage exit 2 through the surface); there is no HTTP fallback.
 Responses are copied so one caller cannot change future playback.
 
+### Recorded headers
+
+`as_engine.cassette.RECORDED_RESPONSE_HEADERS` defines the recording allowlist:
+`Content-Type` and `Content-Disposition` at any status, and `Location` only
+on 201/303 responses, when present. Names are matched case-insensitively and
+written with that canonical spelling. All other response headers are omitted
+after secret discovery and scrubbing. Identical request keys coalesce when
+status, scrubbed body (including binary `body_base64`) and allowlisted headers
+match; differences in those fields still cause a conflicting-response error.
+Volatile headers alone never cause a conflict. Format version 1 is unchanged;
+Player accepts older fixtures and returns their headers as recorded.
+
 ## Scrubbing and review
 
 Register all unlabelled tokens and site identifiers **before the first call**.

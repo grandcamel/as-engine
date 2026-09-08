@@ -320,7 +320,9 @@ def test_invalid_binary_cassette_and_incompatible_replay_fail_closed(tmp_path, o
         Player(path).call(replace(operation, extensions={}), {}, None)
 
 
-def test_binary_cassette_preserves_base64_and_refuses_discovered_payload_secrets(tmp_path, operation):
+def test_binary_cassette_preserves_base64_and_refuses_discovered_payload_secrets(
+    tmp_path, operation
+):
     operation = replace(
         operation, operationId="download", extensions={"x-as-response": {"kind": "binary"}}
     )
@@ -370,3 +372,134 @@ def test_player_rejects_non_2xx_or_missing_binary_body(tmp_path, operation):
     path.write_text(json.dumps({"format_version": 1, "interactions": [interaction]}))
     with pytest.raises(ValueError, match="missing body_base64"):
         Player(path).call(operation, {}, None, output=tmp_path / "ignored.bin")
+
+
+@pytest.mark.parametrize("status", [200, 201, 302, 303, 307, 400])
+def test_volatile_headers_coalesce_with_exact_canonical_allowlist(tmp_path, operation, status):
+    path = tmp_path / "stable.json"
+    stable = {
+        "content-type": "application/json",
+        "CONTENT-DISPOSITION": 'attachment; filename="result.json"',
+        "lOcAtIoN": "/things/1",
+    }
+    volatile = {
+        "Atl-Request-Id",
+        "Atl-Traceid",
+        "Date",
+        "Server-Timing",
+        "X-Amz-Cf-Id",
+        "X-Arequestid",
+        "Ratelimit",
+        "X-Ratelimit-Remaining",
+        "Set-Cookie",
+        "X-Aaccountid",
+        "Via",
+        "Connection",
+        "Transfer-Encoding",
+        "Retry-After",
+    }
+    first = Response(status, {"id": 1}, {**stable, **dict.fromkeys(volatile, "first")})
+    second = Response(
+        status,
+        {"id": 1},
+        {**{k.upper(): v for k, v in stable.items()}, **dict.fromkeys(volatile, "second")},
+    )
+    recorder = Recorder(Wire(first, second), path)
+    assert recorder.call(operation, {}, None) == first
+    assert recorder.call(operation, {}, None) == second
+    entries = json.loads(path.read_text())["interactions"]
+    expected = {
+        "Content-Type": "application/json",
+        "Content-Disposition": 'attachment; filename="result.json"',
+    }
+    if status in (201, 303):
+        expected["Location"] = "/things/1"
+    assert len(entries) == 1
+    assert entries[0]["response"] == {"status": status, "body": {"id": 1}, "headers": expected}
+
+
+@pytest.mark.parametrize("status", [200, 201, 303])
+def test_absent_response_headers_are_not_invented(tmp_path, operation, status):
+    path = tmp_path / "absent.json"
+    Recorder(Wire(Response(status, None)), path).call(operation, {}, None)
+    assert json.loads(path.read_text())["interactions"][0]["response"]["headers"] == {}
+
+
+@pytest.mark.parametrize(
+    "second",
+    [
+        Response(201, {"id": 2}, {"Content-Type": "application/json", "Location": "/things/1"}),
+        Response(303, {"id": 1}, {"Content-Type": "application/json", "Location": "/things/1"}),
+        Response(201, {"id": 1}, {"Content-Type": "text/plain", "Location": "/things/1"}),
+        Response(201, {"id": 1}, {"Content-Type": "application/json", "Location": "/things/2"}),
+    ],
+    ids=["body", "status", "content-type", "location"],
+)
+def test_allowlist_keeps_meaningful_response_conflicts(tmp_path, operation, second):
+    path = tmp_path / "conflict.json"
+    first = Response(201, {"id": 1}, {"Content-Type": "application/json", "Location": "/things/1"})
+    recorder = Recorder(Wire(first, second), path)
+    recorder.call(operation, {}, None)
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match="^cassette has conflicting responses for getThings$"):
+        recorder.call(operation, {}, None)
+    assert path.read_bytes() == before
+
+
+def test_legacy_generic_surface_headers_replay_unchanged(operation):
+    # Two interactions preserved from Confluence's pre-allowlist recording.
+    path = Path(__file__).parent / "fixtures/legacy-generic-surface.json"
+    before = path.read_bytes()
+    data = json.loads(before)
+    assert data["format_version"] == 1
+    player = Player(path)
+    for entry in data["interactions"]:
+        response = entry["response"]
+        assert response["headers"] == {
+            "Authorization": "<as-secret-4>",
+            "Content-Type": "application/json",
+            "Set-Cookie": "<as-secret-6>",
+        }
+        assert player.call(
+            replace(operation, operationId=entry["operationId"]),
+            entry["parameters"],
+            entry["body"],
+        ) == Response(response["status"], response["body"], response["headers"])
+    assert path.read_bytes() == before
+
+
+def test_binary_allowlist_preserves_filename_and_payload_conflicts(
+    tmp_path, operation, monkeypatch
+):
+    operation = replace(operation, extensions={"x-as-response": {"kind": "binary"}})
+    headers = {
+        "content-type": "image/png",
+        "content-disposition": 'attachment; filename="recorded.png"',
+        "Date": "first",
+    }
+    payload = b"\x00PNG\xffpayload"
+    wire = BinaryWire(payload, headers)
+    path = tmp_path / "binary-headers.json"
+    recorder = Recorder(wire, path)
+    recorder.call(operation, {}, None, output=tmp_path / "capture.bin")
+    headers["Date"] = "second"
+    recorder.call(operation, {}, None, output=tmp_path / "capture-again.bin")
+    entries = json.loads(path.read_text())["interactions"]
+    assert len(entries) == 1
+    assert entries[0]["response"]["headers"] == {
+        "Content-Type": "image/png",
+        "Content-Disposition": 'attachment; filename="recorded.png"',
+    }
+    before = path.read_bytes()
+    wire.payload = b"different bytes"
+    with pytest.raises(ValueError, match="^cassette has conflicting responses for getThings$"):
+        recorder.call(operation, {}, None, output=tmp_path / "different.bin")
+    assert path.read_bytes() == before
+    monkeypatch.chdir(tmp_path)
+    replay = Player(path).call(operation, {}, None)
+    assert replay.body == {
+        "path": "recorded.png",
+        "bytes": len(payload),
+        "content_type": "image/png",
+    }
+    assert (tmp_path / "recorded.png").read_bytes() == payload
