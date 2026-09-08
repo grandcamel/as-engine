@@ -104,6 +104,11 @@ core version it was released with (grand-camel-platform ADR 0013).
   (order_by field list on the clause form) and a key_paths body identity form
   that checks several single-key paths independently, for the jira-as
   Compatibility Contract (JAS-48). (JAS-48)
+- Jira stateful simulation store (`JiraSimulationStore`/`JiraSimulation`, opt-
+  in, Confluence model unchanged) for Wrapper Verb tests; textarea selectors
+  on the rich-text transform — repeatable `--adf-field` on the surface and
+  cached instance-field metadata on `Context` execute the textarea marker
+  (JAS-49; comment 12320). (JAS-49)
 
 ## [0.1.0a0] - 2026-09-06
 
