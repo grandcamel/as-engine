@@ -636,7 +636,26 @@ class JiraSimulationStore:
             if not isinstance(state[name], dict if name in {"transitions", "desk_customers", "requests", "approvals", "slas", "articles"} else list):
                 raise TypeError(f"invalid Jira simulation collection: {name}")
             setattr(self, name, state[name])
+        self._issue_key_counters: dict[str, int] = {}
+        self._issue_id_counter = 0
+        self._sync_issue_counters()
         self.calls: list[tuple[str, dict[str, Any], Any]] = []
+
+    def _sync_issue_counters(self) -> None:
+        """Include seeded or directly inserted fixtures without lowering counters."""
+        for issue in self.issues:
+            project, number = issue["key"].rsplit("-", 1)
+            self._issue_key_counters[project] = max(
+                self._issue_key_counters.get(project, 0), int(number)
+            )
+            self._issue_id_counter = max(self._issue_id_counter, int(issue["id"]))
+
+    def _allocate_issue_identity(self, project: str) -> tuple[str, str]:
+        self._sync_issue_counters()
+        number = self._issue_key_counters.get(project, 0) + 1
+        self._issue_key_counters[project] = number
+        self._issue_id_counter += 1
+        return str(self._issue_id_counter), f"{project}-{number}"
 
     def snapshot(self) -> dict[str, Any]:
         return deepcopy({name: getattr(self, name) for name in self._collections})
@@ -766,8 +785,8 @@ class JiraSimulation:
         if name == "createIssue":
             fields = deepcopy(b["fields"])
             project = fields["project"]["key"]
-            number = max([int(x["key"].rsplit("-", 1)[1]) for x in s.issues if x["key"].startswith(project + "-")] + [0]) + 1
-            created = {"id": str(max([int(x["id"]) for x in s.issues] + [0]) + 1), "key": f"{project}-{number}", "fields": fields}
+            issue_id, issue_key = s._allocate_issue_identity(project)
+            created = {"id": issue_id, "key": issue_key, "fields": fields}
             fields.setdefault("status", {"name": "Open"})
             fields.setdefault("issuelinks", [])
             fields.setdefault("subtasks", [])

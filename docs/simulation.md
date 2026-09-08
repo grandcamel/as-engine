@@ -32,6 +32,7 @@ Seed keys replace entire collections: `issues`, `projects`, `fields`,
 Reuse one store across calls to observe mutations; `snapshot()` returns a
 detached copy, while `store.calls` records copied operation IDs, parameters,
 and bodies. The existing Confluence store and defaults are unchanged.
+Within a Jira store, issue keys advance per project and numeric issue IDs advance globally from the seed maxima and are never reused after deletion, like Jira Cloud.
 
 Supported operations cover the Jira wrapper workflows: issue search, creation,
 editing, deletion, transitions, links, comments and worklogs; project and field

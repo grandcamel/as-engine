@@ -62,3 +62,91 @@ def test_sprint_full_and_partial_updates_have_distinct_wire_semantics():
     full = sim.call(op("updateSprint"), {"sprintId": 1}, {"state": "active"})
     assert full.body["name"] is None and full.body["goal"] is None
     assert full.body["startDate"] is None and full.body["state"] == "active"
+
+
+def create_issue(sim, project="SBX", **fields):
+    response = sim.call(
+        op("createIssue"),
+        {},
+        {"fields": {"project": {"key": project}, "summary": "New task", **fields}},
+    )
+    assert response.status == 201
+    return response.body
+
+
+def test_deleted_highest_created_identity_is_not_reused_across_transports():
+    store = JiraSimulationStore()
+    sim = JiraSimulation(store)
+    first = create_issue(sim)
+    assert first == {"id": "3", "key": "SBX-3"}
+    assert sim.call(op("deleteIssue"), {"issueIdOrKey": first["key"]}, None).status == 204
+    sim.close()
+    another = JiraSimulation(store)
+    second = create_issue(another)
+    assert int(second["id"]) > int(first["id"])
+    assert int(second["key"].rsplit("-", 1)[1]) > int(first["key"].rsplit("-", 1)[1])
+    for identity in first.values():
+        assert another.call(op("getIssue"), {"issueIdOrKey": identity}, None).status == 404
+
+
+def test_deleted_seed_maxima_survive_even_when_all_issues_are_deleted():
+    store = JiraSimulationStore(
+        {
+            "issues": [
+                {"id": "400", "key": "SBX-27", "fields": {}},
+                {"id": "900", "key": "SBX-4", "fields": {}},
+            ]
+        }
+    )
+    sim = JiraSimulation(store)
+    for key in ("SBX-27", "SBX-4"):
+        assert sim.call(op("deleteIssue"), {"issueIdOrKey": key}, None).status == 204
+    assert store.snapshot()["issues"] == []
+    assert create_issue(sim) == {"id": "901", "key": "SBX-28"}
+
+
+def test_project_keys_are_independent_and_issue_ids_are_global():
+    store = JiraSimulationStore(
+        {
+            "issues": [
+                {"id": "80", "key": "SBX-20", "fields": {}},
+                {"id": "120", "key": "OTHER-7", "fields": {}},
+            ]
+        }
+    )
+    sim = JiraSimulation(store)
+    assert sim.call(op("deleteIssue"), {"issueIdOrKey": "OTHER-7"}, None).status == 204
+    created = [create_issue(sim, project) for project in ("SBX", "OTHER", "NEW", "SBX")]
+    assert [row["key"] for row in created] == ["SBX-21", "OTHER-8", "NEW-1", "SBX-22"]
+    assert [row["id"] for row in created] == ["121", "122", "123", "124"]
+    ids = [row["id"] for row in store.snapshot()["issues"]]
+    assert len(ids) == len(set(ids))
+
+
+def test_subtasks_share_allocator_and_cascade_delete_keeps_high_water_marks():
+    sim = JiraSimulation(JiraSimulationStore({"issues": []}))
+    parent = create_issue(sim)
+    child = create_issue(
+        sim, parent={"key": parent["key"]}, issuetype={"name": "Sub-task", "subtask": True}
+    )
+    assert parent == {"id": "1", "key": "SBX-1"}
+    assert child == {"id": "2", "key": "SBX-2"}
+    assert sim.call(
+        op("deleteIssue"), {"issueIdOrKey": parent["key"], "deleteSubtasks": "true"}, None
+    ).status == 204
+    assert sim.store.snapshot()["issues"] == []
+    assert create_issue(sim) == {"id": "3", "key": "SBX-3"}
+    for row in (parent, child):
+        for identity in row.values():
+            assert sim.call(op("getIssue"), {"issueIdOrKey": identity}, None).status == 404
+
+
+def test_directly_inserted_fixture_raises_retained_identity_counters():
+    store = JiraSimulationStore()
+    sim = JiraSimulation(store)
+    store.issues.append({"id": "800", "key": "SBX-50", "fields": {}})
+    created = create_issue(sim)
+    assert created == {"id": "801", "key": "SBX-51"}
+    for key in ("SBX-50", created["key"]):
+        assert sim.call(op("deleteIssue"), {"issueIdOrKey": key}, None).status == 204
+    assert create_issue(sim) == {"id": "802", "key": "SBX-52"}
