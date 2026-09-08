@@ -112,6 +112,11 @@ core version it was released with (grand-camel-platform ADR 0013).
 - Declare hatchling and build in the dev extra, document development
   prerequisites (no-isolation builds, oasdiff 1.31.0 install, OASDIFF
   override), and build distributions in test CI. (JAS-58)
+- Cassette `Recorder` writes only a stable response-header allowlist
+  (`RECORDED_RESPONSE_HEADERS`: Content-Type, Content-Disposition, Location on
+  201/303) and compares conflicts on status, scrubbed body and those headers,
+  so repeated live calls that differ only in volatile headers coalesce;
+  `Player` still accepts fixtures recorded before the change. (JAS-70)
 
 ## [0.1.0a0] - 2026-09-06
 
