@@ -117,6 +117,10 @@ core version it was released with (grand-camel-platform ADR 0013).
   201/303) and compares conflicts on status, scrubbed body and those headers,
   so repeated live calls that differ only in volatile headers coalesce;
   `Player` still accepts fixtures recorded before the change. (JAS-70)
+- Jira simulation: `JiraSimulationStore` keeps per-project issue-key counters
+  and a global issue-id counter that survive deletes (seeded from the seed
+  maxima, raised from directly inserted rows), so a delete-then-create never
+  reuses a key or id, like Jira Cloud. (JAS-69)
 
 ## [0.1.0a0] - 2026-09-06
 
