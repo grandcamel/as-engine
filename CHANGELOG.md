@@ -11,6 +11,8 @@ core version it was released with (grand-camel-platform ADR 0013).
 
 ### Added
 
+- JAS-52: Added Unix/loopback-token serve mode, `SocketTransport`, authoritative validation/guard and private call logs; `as_engine.serve.fake_sidecar` exposes the same Responder seam for tests. Binary downloads/output and multipart uploads are explicitly unsupported.
+
 - The OpenAPI Overlay applier (update/remove subset: simple paths, bracket
   keys, bracket integer indexes; unsupported selectors and `copy` refused),
   normalization hooks (declared extensions stripped; defect normalization),
