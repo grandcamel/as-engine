@@ -9,6 +9,10 @@ core version it was released with (grand-camel-platform ADR 0013).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-09
+
+First published release (grand-camel-platform JAS ledger decision 37): the core that jira-as 2.0.0rc1 and confluence-as 2.0.0rc1 were built and validated against (jira-as 37c1ca9, confluence-as fec7908; downstream suites green). Products pin `as-engine>=0.1.0a0,<0.2`.
+
 ### Added
 
 - JAS-52: Added Unix/loopback-token serve mode, `SocketTransport`, authoritative validation/guard and private call logs; `as_engine.serve.fake_sidecar` exposes the same Responder seam for tests. Binary downloads/output and multipart uploads are explicitly unsupported.
