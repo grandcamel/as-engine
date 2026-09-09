@@ -9,6 +9,10 @@ core version it was released with (grand-camel-platform ADR 0013).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-09
+
+First release actually published to PyPI. Identical to 0.1.0 except the publish workflow, which now installs both downstream products without build isolation (they declare as-engine as a build requirement, and an isolated build resolved it from PyPI before the release existed). The v0.1.0 tag and GitHub release were never published.
+
 ## [0.1.0] - 2026-09-09
 
 First published release (grand-camel-platform JAS ledger decision 37): the core that jira-as 2.0.0rc1 and confluence-as 2.0.0rc1 were built and validated against (jira-as 37c1ca9, confluence-as fec7908; downstream suites green). Products pin `as-engine>=0.1.0a0,<0.2`.

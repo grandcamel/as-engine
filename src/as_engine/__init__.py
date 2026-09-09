@@ -6,7 +6,7 @@ registry with the Atlassian converters isolated in one module; the guard; the
 help renderer; the responder and simulation test doubles; serve mode.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = ["SocketTransport", "__version__", "fake_sidecar"]
 
