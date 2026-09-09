@@ -75,12 +75,12 @@ jobs:
         run: |
           cd consumer
           pip install ../dist/*.whl
-          if [ "${{ matrix.repo }}" = "confluence-as" ]; then
-            pip install hatchling
-            pip install --no-build-isolation -e ".[dev]"
-          else
-            pip install -e ".[dev]" || pip install -e .
-          fi
+          # Both products declare as-engine as a build requirement; an
+          # isolated build would resolve it from PyPI, where the release
+          # under test is not yet published. Install without isolation so
+          # the wheel just installed satisfies the build too.
+          pip install hatchling
+          pip install --no-build-isolation -e ".[dev]"
       - name: Run the product suite
         run: |
           cd consumer
