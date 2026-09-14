@@ -9,6 +9,10 @@ core version it was released with (grand-camel-platform ADR 0013).
 
 ## [Unreleased]
 
+### Fixed
+
+- Bare `pytest`, as CI runs it, can import the `tests.*` helper modules: pytest `pythonpath` now includes the repository root. Every main CI run since 2026-09-08 had failed at collection for this reason.
+
 ## [0.1.1] - 2026-09-09
 
 First release actually published to PyPI. Identical to 0.1.0 except the publish workflow, which now installs both downstream products without build isolation (they declare as-engine as a build requirement, and an isolated build resolved it from PyPI before the release existed). The v0.1.0 tag and GitHub release were never published.
