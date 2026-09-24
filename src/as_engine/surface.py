@@ -118,6 +118,16 @@ def describe_operation(
     }
 
 
+SCOPE_ENFORCEMENT = ("enforcing", "permissive")
+
+
+def _scope_enforcement(value: object) -> str:
+    """Accept only the two spelled-out modes; anything else is a usage error."""
+    if not isinstance(value, str) or value not in SCOPE_ENFORCEMENT:
+        raise ValueError("scope_enforcement must be enforcing or permissive")
+    return value
+
+
 def describe_markdown(value: Mapping[str, Any]) -> str:
     from .help import describe_document, render_help
 
@@ -134,13 +144,27 @@ class Surface:
         scope_allowlist: Sequence[str] | None = (),
         scope_allow_site: bool = False,
         scope_resolution_rules: Mapping[str, tuple[tuple[str, ...], ...]] | None = None,
+        scope_enforcement: str = "enforcing",
     ):
         self.scope_allowlist = None if scope_allowlist is None else tuple(scope_allowlist)
         self.scope_allow_site = scope_allow_site
         self.scope_resolution_rules = deepcopy(dict(scope_resolution_rules or {}))
+        self.scope_enforcement = scope_enforcement
         self.indexes = indexes
         self.transport_factory = transport_factory
         self._registry = registry
+
+    @property
+    def scope_enforcement(self) -> str:
+        """``permissive`` skips the x-as-scope transform; the default enforces it.
+
+        Consumers own the opt-out and its disclosure. Serve mode always enforces.
+        """
+        return self._scope_enforcement
+
+    @scope_enforcement.setter
+    def scope_enforcement(self, value: str) -> None:
+        self._scope_enforcement = _scope_enforcement(value)
 
     @property
     def registry(self) -> Registry:
@@ -176,6 +200,7 @@ class Surface:
         scope_allowlist: Sequence[str] | None = None,
         scope_allow_site: bool | None = None,
         scope_argv_identity: str | None = None,
+        scope_enforcement: str | None = None,
         representation: str | None = None,
         raw: bool = False,
         output: str | Path | None = None,
@@ -191,6 +216,7 @@ class Surface:
         transports: dict[str, Transport] = {}
         active: set[str] = set()
         final_body = body
+        enforcement = self.scope_enforcement
 
         def execute(
             op: Operation,
@@ -291,6 +317,7 @@ class Surface:
                 scope_argv_identity=scope_argv_identity,
                 scope_resolution_rules=self.scope_resolution_rules,
                 scope_send=lambda target, params, payload: transport().call(target, params, payload),
+                scope_enforcement=enforcement,
                 representation=selected_representation,
                 raw=raw_response,
                 adf_fields=tuple(adf_fields) if op is operation else (),
@@ -328,6 +355,8 @@ class Surface:
                 active.remove(op.operationId)
 
         try:
+            if scope_enforcement is not None:
+                enforcement = _scope_enforcement(scope_enforcement)
             from .transforms.richtext import custom_field_descriptors, custom_field_ids
 
             selected_adf_fields = custom_field_ids(adf_fields)

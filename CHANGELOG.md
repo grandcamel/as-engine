@@ -9,6 +9,10 @@ core version it was released with (grand-camel-platform ADR 0013).
 
 ## [Unreleased]
 
+### Added
+
+- `Surface(scope_enforcement="enforcing" | "permissive")`, with a matching per-call `Surface.call` override: a consumer-owned opt-out for trusted interactive use. `permissive` skips the `x-as-scope` hook entirely (no decision, allowlist, site gate or resolution read); the default stays `enforcing`, so a consumer that sets nothing behaves exactly as before. The engine reads no environment for it, and any other value is rejected. `serve` always enforces: it resets the factory Surface and passes `enforcing` on every served call. The workflow MCP adapter pins `JIRA_SCOPE_ENFORCEMENT=enforcing` in run-child environments.
+
 ### Fixed
 
 - Bare `pytest`, as CI runs it, can import the `tests.*` helper modules: pytest `pythonpath` now includes the repository root. Every main CI run since 2026-09-08 had failed at collection for this reason.

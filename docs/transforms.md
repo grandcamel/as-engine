@@ -84,9 +84,11 @@ parameter. An explicit id alone bypasses lookup; id plus alias is a usage error.
 
 ## Consumer-supplied context fields
 
-`Surface` accepts `scope_allowlist`, `scope_allow_site` and
-`scope_resolution_rules` as constructor policy defaults. `Surface.call` accepts
-optional per-call `scope_allowlist`, `scope_allow_site` and `scope_argv_identity`;
+`Surface` accepts `scope_allowlist`, `scope_allow_site`,
+`scope_resolution_rules` and `scope_enforcement` (see
+[consumer opt-out](guard.md#consumer-opt-out)) as constructor policy defaults.
+`Surface.call` accepts optional per-call `scope_allowlist`, `scope_allow_site`,
+`scope_argv_identity` and `scope_enforcement`;
 these additive fields reach each Context, including nested guarded calls, without
 changing aliases, parameters, bodies or later-call defaults. The default scope
 hook runs at order 5. Rules are keyed by `document:operationId`, with tuples of
