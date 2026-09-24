@@ -5,7 +5,10 @@ runs `serve(surface_factory, call_log=..., allowlist=[...], allow_site=False,
 socket_path=...)` in the foreground. The factory provides a Surface backed by
 its normal HTTP transport; no credential is serialized by the socket client.
 Both sides validate parameters, and the server always validates request bodies
-and executes its own Surface guard. The server's scope policy is fixed at start.
+and executes its own Surface guard. The server's scope policy is fixed at start,
+and it always enforces: a factory Surface built with
+`scope_enforcement="permissive"` is reset to `enforcing`, and each served call
+passes `enforcing` explicitly. A permissive client skips only its own local check.
 
 Each connection carries exactly one request and one response. Frames are UTF-8
 JSON objects ending in LF, capped at 8 MiB including LF. Duplicate object members,

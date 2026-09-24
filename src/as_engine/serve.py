@@ -328,6 +328,8 @@ def handle_request(
             scope_allowlist=policy,
             scope_allow_site=allow_site,
             scope_argv_identity=_body_identity(operation, body),
+            # The sidecar is the boundary: a consumer opt-out never reaches it.
+            scope_enforcement="enforcing",
             raw=bool(operation.extensions.get("x-as-richtext")),
         )
         reply = {
@@ -400,6 +402,7 @@ def serve(
     stopped = stop_event if stop_event is not None else threading.Event()
     surface = surface_factory()
     surface.scope_allowlist, surface.scope_allow_site = policy, allow_site
+    surface.scope_enforcement = "enforcing"
     log_fd = _open_log(call_log)
     listener: socket.socket | None = None
     identity: tuple[int, int] | None = None

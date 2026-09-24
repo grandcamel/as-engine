@@ -236,6 +236,8 @@ class Profile:
                 if name in source:
                     env[name] = source[name]
             env["JIRA_AS_TRANSPORT"] = "http"
+            # The environment outranks settings files in the child's cwd.
+            env["JIRA_SCOPE_ENFORCEMENT"] = "enforcing"
         return env
 
     def runtime_error(self) -> str | None:

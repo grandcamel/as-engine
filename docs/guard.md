@@ -88,6 +88,23 @@ still requires allow_site. Ordinary prerequisite/version calls remain guarded;
 version enrichment can therefore perform its own scope resolution before its
 normal version read. There is no general internal-call or allow_site bypass.
 
+### Consumer opt-out
+
+`Surface(..., scope_enforcement="enforcing")` is the default. A consumer may
+construct or set a Surface with `scope_enforcement="permissive"` for trusted
+interactive use; `Surface.call(..., scope_enforcement=...)` overrides it for one
+call without persisting. Any other value is a `ValueError` at construction or
+assignment and a code-2 `SurfaceError` per call, before any send. Only the exact
+value `permissive` reaches the Context as an opt-out.
+
+A permissive call skips the scope hook entirely: no `decide`, allowlist, site
+gate, argv agreement or resolution read, and scope never consumes a prerequisite
+alias, so prerequisites resolve it as usual. Every other transform and the
+parameter/body checks still run. The engine reads no environment for this: the
+consumer decides, validates its own setting, and discloses the mode to its user.
+`serve` always enforces: it resets the factory Surface to `enforcing` at start and
+passes `enforcing` on every served call, so an opt-out never reaches a sidecar.
+
 ## Confluence pilot
 
 `CONFLUENCE_ALLOWED_SPACES` is comma-separated space keys; absent or empty means

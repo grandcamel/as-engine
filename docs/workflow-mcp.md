@@ -118,7 +118,9 @@ unsupported selected context while claiming to preserve it. Discovery remains pu
 Each child environment starts empty. Generated settings provide fixed HOME,
 TMPDIR, cwd, executable-directory plus system PATH, `LANG=C`, `LC_ALL=C`,
 `NO_COLOR=1`, `PYTHONNOUSERSITE=1` and `PYTHONUTF8=1`. Run children receive only
-the admitted Jira values and `JIRA_AS_TRANSPORT=http`. Discovery children receive
+the admitted Jira values, `JIRA_AS_TRANSPORT=http` and
+`JIRA_SCOPE_ENFORCEMENT=enforcing`; that pin outranks any product settings file
+in the fixed cwd, so a run child never skips the scope guard. Discovery children receive
 no Jira credentials or execution-policy values. Bare credential aliases, arbitrary
 JIRA settings, Python path overrides, Platform/tunnel secrets and routing overrides
 are not forwarded. Credentials never enter argv or result metadata.

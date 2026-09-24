@@ -133,6 +133,10 @@ def _resolve(context: Context, steps: Any, identity: Any) -> Any:
 
 class Scope(Transform):
     def request(self, context: Context, tag: Any) -> None:
+        if context.scope_enforcement == "permissive":
+            # The consumer opted this Surface out; no decision, resolution read
+            # or alias consumption happens, so prerequisites see the raw aliases.
+            return
         if tag is None:
             raise _refuse(context, None, "scope tag must be an object")
         params = {**context.parameters, **context.aliases}

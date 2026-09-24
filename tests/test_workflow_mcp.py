@@ -615,6 +615,15 @@ def test_immutable_profile_and_environment_snapshot(pilot, monkeypatch):
     asyncio.run(scenario())
 
 
+def test_run_environment_pins_scope_enforcement(pilot, monkeypatch):
+    # An operator shell opt-out is not admitted; the pin also outranks any
+    # settings file the child could read from its fixed working directory.
+    monkeypatch.setenv("JIRA_SCOPE_ENFORCEMENT", "permissive")
+    profile = load_profile(pilot["profile"])
+    assert profile.environment(run=True)["JIRA_SCOPE_ENFORCEMENT"] == "enforcing"
+    assert "JIRA_SCOPE_ENFORCEMENT" not in profile.environment(run=False)
+
+
 @pytest.mark.parametrize("change", ["extra", "nested", "boolean", "symlink", "permissions", "duplicate"])
 def test_operator_profile_fails_closed(pilot, change):
     if change == "extra":

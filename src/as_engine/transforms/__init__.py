@@ -42,6 +42,8 @@ class Context:
     scope_argv_identity: str | None = None
     scope_resolution_rules: Mapping[str, tuple[tuple[str, ...], ...]] = field(default_factory=dict)
     scope_send: Callable[[Operation, Mapping[str, Any], Any], Response] | None = None
+    # Only the exact value "permissive" skips the scope transform.
+    scope_enforcement: str = "enforcing"
     representation: str | None = None
     raw: bool = False
     adf_fields: tuple[str, ...] = ()
