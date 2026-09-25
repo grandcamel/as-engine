@@ -9,6 +9,8 @@ core version it was released with (grand-camel-platform ADR 0013).
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-09-25
+
 ### Added
 
 - `Surface(scope_enforcement="enforcing" | "permissive")`, with a matching per-call `Surface.call` override: a consumer-owned opt-out for trusted interactive use. `permissive` skips the `x-as-scope` hook entirely (no decision, allowlist, site gate or resolution read); the default stays `enforcing`, so a consumer that sets nothing behaves exactly as before. The engine reads no environment for it, and any other value is rejected. `serve` always enforces: it resets the factory Surface and passes `enforcing` on every served call. The workflow MCP adapter pins `JIRA_SCOPE_ENFORCEMENT=enforcing` in run-child environments.
